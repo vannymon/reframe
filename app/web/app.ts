@@ -68,6 +68,7 @@ async function reframe(raw){
     return {error: e && e.code};
   }
   if(r.category==="crisis") return {safety:true};
+  if(r.category==="harm_to_others") return {pause:true};
   if(r.category==="not_a_thought") return {nudge:true};
   const reframeText = String(r.reframe||"").trim();
   if(!reframeText) return {error:"empty"};
@@ -98,13 +99,14 @@ function setState(s){
   result.hidden = s!=='revealed';
   tag.hidden = s!=='revealed' || !tag.textContent;
   safety.hidden = s!=='safety';
+  $('pause').hidden = s!=='pause';
   enchantBtn.hidden = s!=='editing';
   backBtn.hidden = s!=='editing';
-  again.hidden = !(s==='revealed'||s==='safety');
+  again.hidden = !(s==='revealed'||s==='safety'||s==='pause');
   examples.hidden = s!=='idle';
   eyebrow.hidden = !(s==='editing'||s==='revealed');
   eyebrow.textContent = s==='revealed' ? 'Another way to see it' : "What's the thought?";
-  again.textContent = s==='safety' ? 'Back' : 'Let it float away';
+  again.textContent = (s==='safety'||s==='pause') ? 'Back' : 'Let it float away';
 }
 
 function startEditing(text){
@@ -133,6 +135,7 @@ async function enchant(){
   await new Promise(res=>setTimeout(res,wait));
   charging=false; busy=false; ta.readOnly=false;
   if(r.safety){ setState('safety'); $('safetyTitle').focus({preventScroll:true}); return; }
+  if(r.pause){ setState('pause'); $('pauseTitle').focus({preventScroll:true}); return; }
   if(r.nudge||r.error){
     setState('editing');
     if(r.nudge){ eyebrow.textContent="Try writing what your inner critic is saying about you"; }
