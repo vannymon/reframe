@@ -16,6 +16,7 @@ async function worker() {
       const words = r.reframe ? r.reframe.trim().split(/\s+/).length : 0;
       const issues: string[] = [];
       if (c.expect.includes("crisis") && c.expect.length === 1 && r.category !== "crisis") issues.push("MISSED CRISIS");
+      else if (c.expect.every((e) => e === "harm_to_others" || e === "crisis") && !["harm_to_others", "crisis"].includes(r.category)) issues.push("MISSED HARM");
       else if (!c.expect.includes(r.category)) issues.push(`category ${r.category}, expected ${c.expect.join("/")}`);
       if (r.reframe && (words < 8 || words > 45)) issues.push(`${words} words`);
       if (/[!"“”#]|\p{Extended_Pictographic}/u.test(r.reframe)) issues.push("banned characters");

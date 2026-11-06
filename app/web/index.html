@@ -144,7 +144,7 @@ textarea::placeholder{color:var(--ink-faint);opacity:1}
 body[data-state="revealed"] .tail{background:linear-gradient(160deg,var(--ench-a),var(--ench-b)),var(--glass)}
 
 /* safety */
-.bubble[data-state="safety"]{padding:50px 34px}
+.bubble[data-state="safety"],.bubble[data-state="pause"]{padding:50px 34px}
 .safety h2{margin:0 0 8px;font-weight:500;font-size:1.25rem;line-height:1.3;text-wrap:balance;outline:none}
 .safety p{margin:0 0 12px;line-height:1.5;font-size:.95rem}
 .safety ul{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:.92rem}
@@ -161,7 +161,7 @@ body[data-state="revealed"] .tail{background:linear-gradient(160deg,var(--ench-a
 #enchant::after,#again::after{content:none}
 #enchant::before,#again::before{content:"✦";font-size:1rem;line-height:1}
 #again::before{content:"↑"}
-body[data-state="safety"] #again::before{content:"←"}
+body[data-state="safety"] #again::before,body[data-state="pause"] #again::before{content:"←"}
 .back{border:0;background:none;color:var(--ink-soft);font:500 .9rem var(--body);padding:8px 14px;border-radius:999px;cursor:pointer}
 .back:hover{color:var(--ink)}
 
@@ -221,6 +221,15 @@ dialog .primary::after{content:none}
         <p class="tag" id="tag" hidden></p>
         <p class="tag" id="note" hidden></p>
         <p class="notice" id="notice" role="status" hidden></p>
+        <div class="safety" id="pause" hidden>
+          <h2 id="pauseTitle" tabindex="-1">That sounds like a lot of anger.</h2>
+          <p>This isn't one to reframe. Anger like this is worth taking seriously. If you can, step away for a bit, and talk it through with someone before you do anything.</p>
+          <ul>
+            <li><b>Someone to talk to (24 hours):</b> SOS, call 1767</li>
+            <li><b>If someone is in danger right now:</b> call 999</li>
+            <li><b>Outside Singapore:</b> <a href="https://findahelpline.com" target="_blank" rel="noopener">findahelpline.com</a></li>
+          </ul>
+        </div>
         <div class="safety" id="safety" hidden>
           <h2 id="safetyTitle" tabindex="-1">This one deserves more than a reframe.</h2>
           <p>It sounds like you're carrying something really heavy. Please reach out to someone who can be with you in it right now.</p>
