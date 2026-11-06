@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Locks the page down: scripts only from this site, network calls only to this site and Anthropic. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://api.anthropic.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="description" content="Write down a harsh thought and see a kinder, truer way to look at it. Anonymous, nothing saved.">
+<!-- Where the page sends thoughts. Leave as /api/reframe when the Worker serves this page. -->
+<meta name="reframe-api" content="/api/reframe">
+<title>Reframe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: one full-screen dusk sky; a single frosted-glass thought bubble is the stage, pill controls beneath it, quiet chrome at the edges */
+:root{
+  --sky-top:#74a9e6; --sky-mid:#b5d4f2; --sky-low:#f6dac6;
+  --cloud:rgba(255,255,255,.9);
+  --glass:rgba(255,255,255,.28); --glass-2:rgba(255,255,255,.22);
+  --glass-edge:rgba(255,255,255,.75); --glass-shine:rgba(255,255,255,.85);
+  --chip-glass:rgba(255,255,255,.3); --glass-end:rgba(255,255,255,.62);
+  --ench-a:rgba(255,240,214,.5); --ench-b:rgba(255,222,234,.34);
+  --ink:#1a2640; --ink-soft:rgba(26,38,64,.7); --ink-faint:rgba(26,38,64,.42);
+  --glow:#ffffff; --glow-2:#ffadc4;
+  --btn:rgba(255,255,255,.4); --btn-ink:#1a2640; --btn-edge:rgba(255,255,255,.85);
+  --icon:rgba(255,255,255,.6); --icon-ink:#1a2640;
+  --foot:#ffffff; --foot-shadow:0 1px 3px rgba(40,60,110,.45),0 0 14px rgba(40,60,110,.3);
+  --focus:#1a2640; --dialog:rgba(255,255,255,.6); --dialog-solid:#eef4fc;
+  --shadow:rgba(40,60,110,.22);
+  --star:0;
+  --body:"Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --sky-top:#0b1230; --sky-mid:#252b5a; --sky-low:#5a476c;
+  --cloud:rgba(196,186,236,.16);
+  --glass:rgba(255,255,255,.1); --glass-2:rgba(255,255,255,.08);
+  --glass-edge:rgba(255,255,255,.3); --glass-shine:rgba(255,255,255,.35);
+  --chip-glass:rgba(255,255,255,.1); --glass-end:rgba(255,255,255,.2);
+  --ench-a:rgba(255,214,140,.18); --ench-b:rgba(255,173,196,.12);
+  --ink:#f6f4fc; --ink-soft:rgba(246,244,252,.78); --ink-faint:rgba(246,244,252,.45);
+  --btn:rgba(255,255,255,.14); --btn-ink:#f6f4fc; --btn-edge:rgba(255,255,255,.4);
+  --icon:rgba(255,255,255,.2); --icon-ink:#f6f4fc;
+  --foot:#ffffff; --foot-shadow:none;
+  --focus:#ffffff; --dialog:rgba(30,34,72,.72); --dialog-solid:#1e2248;
+  --shadow:rgba(0,0,0,.4);
+  --star:.85; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --sky-top:#0b1230; --sky-mid:#252b5a; --sky-low:#5a476c;
+  --cloud:rgba(196,186,236,.16);
+  --glass:rgba(255,255,255,.1); --glass-2:rgba(255,255,255,.08);
+  --glass-edge:rgba(255,255,255,.3); --glass-shine:rgba(255,255,255,.35);
+  --chip-glass:rgba(255,255,255,.1); --glass-end:rgba(255,255,255,.2);
+  --ench-a:rgba(255,214,140,.18); --ench-b:rgba(255,173,196,.12);
+  --ink:#f6f4fc; --ink-soft:rgba(246,244,252,.78); --ink-faint:rgba(246,244,252,.45);
+  --btn:rgba(255,255,255,.14); --btn-ink:#f6f4fc; --btn-edge:rgba(255,255,255,.4);
+  --icon:rgba(255,255,255,.2); --icon-ink:#f6f4fc;
+  --foot:#ffffff; --foot-shadow:none;
+  --focus:#ffffff; --dialog:rgba(30,34,72,.72); --dialog-solid:#1e2248;
+  --shadow:rgba(0,0,0,.4);
+  --star:.85; color-scheme:dark;
+}
+
+[hidden]{display:none!important}
+html,body{height:100%}
+body{background:var(--sky-mid);color:var(--ink);font-family:var(--body);font-size:16px;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* sky */
+.sky{position:fixed;inset:0;z-index:0;overflow:hidden;background:linear-gradient(to bottom,var(--sky-top),var(--sky-mid) 52%,var(--sky-low))}
+.stars{position:absolute;top:0;left:0;width:2px;height:2px;border-radius:50%;opacity:var(--star);animation:twinkle 5s ease-in-out infinite alternate}
+@keyframes twinkle{to{opacity:calc(var(--star) * .45)}}
+.cloud{position:absolute;left:0;top:var(--top);width:var(--w);height:calc(var(--w) * .3);border-radius:50%;background:var(--cloud);filter:blur(14px);opacity:var(--o);animation:drift var(--dur) linear infinite;animation-delay:var(--delay)}
+.cloud::before,.cloud::after{content:"";position:absolute;background:inherit;border-radius:50%}
+.cloud::before{width:52%;height:150%;left:14%;top:-62%}
+.cloud::after{width:38%;height:120%;left:50%;top:-40%}
+@keyframes drift{from{transform:translateX(-45vw)}to{transform:translateX(115vw)}}
+
+#fx{position:fixed;inset:0;z-index:3;pointer-events:none}
+
+/* stage */
+main{position:relative;z-index:2;min-height:100%;box-sizing:border-box;display:grid;grid-template-rows:auto 1fr auto;gap:12px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px}
+.brand{display:flex;align-items:center;gap:10px;margin:0;font-size:1.2rem;font-weight:600;letter-spacing:.02em;color:var(--ink)}
+.brand::before{content:"";width:26px;height:26px;border-radius:9px;flex:none;
+  background:radial-gradient(circle at 32% 30%,#fff 0 18%,transparent 19%),var(--chip-glass);border:1px solid var(--glass-edge);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  box-shadow:inset 0 1px 0 var(--glass-shine),0 4px 14px -4px var(--shadow)}
+.brand small{font-size:.68rem;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--ink);padding:5px 10px;border-radius:999px;
+  background:var(--chip-glass);border:1px solid var(--glass-edge);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.center{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;padding-block:12px}
+
+.wrap{position:relative;animation:bob 7s ease-in-out infinite;width:min(88vw,430px)}
+@keyframes bob{50%{transform:translateY(-10px)}}
+.wrap.away{animation:away .75s cubic-bezier(.5,0,.8,.4) forwards}
+@keyframes away{to{transform:translateY(-55vh) scale(.7);opacity:0}}
+.wrap.arrive{animation:arrive .8s cubic-bezier(.2,.8,.3,1)}
+@keyframes arrive{from{transform:translateY(30vh) scale(.6);opacity:0}}
+
+.bubble{position:relative;box-sizing:border-box;min-height:300px;padding:54px 40px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;
+  background:linear-gradient(155deg,transparent 35%,var(--glass-end)),var(--glass);
+  -webkit-backdrop-filter:blur(34px) saturate(170%);backdrop-filter:blur(34px) saturate(170%);
+  border:1px solid var(--glass-edge);
+  box-shadow:inset 0 1px 0 var(--glass-shine),inset 0 -18px 40px -20px rgba(255,255,255,.35),inset 0 0 0 1px rgba(255,255,255,.06),0 30px 60px -24px var(--shadow);
+  border-radius:50% 50% 48% 52% / 54% 50% 50% 46%;
+  animation:morph 10s ease-in-out infinite alternate;
+  transition:transform .6s cubic-bezier(.3,.7,.3,1),background .9s ease}
+.bubble::before{content:"";position:absolute;top:10%;left:15%;width:30%;height:13%;border-radius:50%;background:radial-gradient(ellipse at center,var(--glass-shine),transparent 70%);transform:rotate(-22deg);pointer-events:none;opacity:.8}
+@keyframes morph{
+  33%{border-radius:46% 54% 52% 48% / 50% 46% 54% 50%}
+  66%{border-radius:53% 47% 46% 54% / 47% 54% 46% 53%}
+  100%{border-radius:48% 52% 54% 46% / 52% 48% 52% 48%}}
+.tail{position:absolute;border-radius:50%;background:var(--glass);-webkit-backdrop-filter:blur(20px) saturate(160%);backdrop-filter:blur(20px) saturate(160%);border:1px solid var(--glass-edge);box-shadow:inset 0 1px 0 var(--glass-shine);transition:background .9s}
+.t1{width:34px;height:34px;left:16%;bottom:-30px}
+.t2{width:16px;height:16px;left:9%;bottom:-56px}
+
+.eyebrow{margin:0;font-size:.72rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft)}
+.tap{position:absolute;inset:0;border:0;border-radius:inherit;background:transparent;color:var(--ink);font-family:var(--body);font-weight:400;font-size:1.4rem;letter-spacing:-.01em;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:0 36px}
+.tap::before{content:"+";display:grid;place-items:center;width:46px;height:46px;margin-bottom:6px;border-radius:50%;font-size:1.5rem;font-weight:300;line-height:1;
+  background:var(--chip-glass);border:1px solid var(--glass-edge)}
+.tap span{font-size:.88rem;font-weight:400;letter-spacing:0;color:var(--ink-soft)}
+.tap:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--focus);outline-offset:4px}
+textarea{width:100%;box-sizing:border-box;border:0;background:transparent;resize:none;text-align:center;color:var(--ink);font:400 1.2rem/1.45 var(--body);padding:4px;outline:none}
+textarea::placeholder{color:var(--ink-faint);opacity:1}
+.result{margin:0;font-weight:400;font-size:clamp(1.2rem,4.8vw,1.5rem);line-height:1.4;letter-spacing:-.01em;text-wrap:balance}
+.result span{display:inline-block;opacity:0;filter:blur(6px);animation:wordIn .7s ease-out forwards}
+@keyframes wordIn{to{opacity:1;filter:blur(0)}}
+.tag{margin:0;font-size:.8rem;color:var(--ink-soft)}
+#tag:not(:empty){padding:5px 12px;border-radius:999px;background:var(--chip-glass);border:1px solid var(--glass-edge)}
+#note{max-width:30ch}
+.tag b{font-weight:600;color:var(--ink)}
+
+/* enchantment */
+.bubble[data-state="charging"]{transform:scale(.965);animation:morph 10s ease-in-out infinite alternate,hum 1.5s ease-in forwards}
+@keyframes hum{to{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 50px 8px color-mix(in srgb,var(--glow) 75%,transparent),0 0 130px 40px color-mix(in srgb,var(--glow-2) 40%,transparent)}}
+.bubble[data-state="charging"] textarea{animation:dissolve 1.45s ease-in forwards}
+@keyframes dissolve{60%{opacity:.5}to{opacity:0;filter:blur(9px);letter-spacing:.25em}}
+.bubble.burst::after{content:"";position:absolute;inset:-25%;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,rgba(255,255,255,.95),color-mix(in srgb,var(--glow) 50%,transparent) 38%,transparent 70%);animation:flash .95s ease-out forwards}
+@keyframes flash{0%{opacity:0;transform:scale(.5)}22%{opacity:1}100%{opacity:0;transform:scale(1.35)}}
+.bubble[data-state="revealed"]{background:linear-gradient(160deg,var(--ench-a),var(--ench-b) 50%,var(--glass-end)),var(--glass);animation:morph 10s ease-in-out infinite alternate,breathe 4s ease-in-out infinite}
+@keyframes breathe{0%,100%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 34px 2px rgba(255,255,255,.45)}50%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 60px 10px rgba(255,255,255,.6)}}
+body[data-state="revealed"] .tail{background:linear-gradient(160deg,var(--ench-a),var(--ench-b)),var(--glass)}
+
+/* safety */
+.bubble[data-state="safety"]{padding:50px 34px}
+.safety h2{margin:0 0 8px;font-weight:500;font-size:1.25rem;line-height:1.3;text-wrap:balance;outline:none}
+.safety p{margin:0 0 12px;line-height:1.5;font-size:.95rem}
+.safety ul{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:.92rem}
+.safety a{color:var(--ink);text-underline-offset:3px}
+
+/* controls */
+.controls{display:flex;flex-direction:column;align-items:center;gap:14px;min-height:52px;margin-top:22px}
+.primary{display:inline-flex;align-items:center;gap:14px;border:1px solid var(--btn-edge);border-radius:999px;background:var(--btn);color:var(--btn-ink);-webkit-backdrop-filter:blur(20px) saturate(160%);backdrop-filter:blur(20px) saturate(160%);font:600 1rem var(--body);padding:7px 7px 7px 24px;cursor:pointer;
+  box-shadow:0 12px 30px -12px var(--shadow);transition:transform .2s,opacity .2s,background .2s}
+.primary:hover{background:color-mix(in srgb,var(--btn) 100%,white 12%)}
+.primary::after{content:"↑";display:grid;place-items:center;width:40px;height:34px;border-radius:999px;color:var(--icon-ink);font-size:1.05rem;
+  background:var(--icon);border:1px solid var(--glass-edge)}
+#enchant,#again{padding:14px 28px;gap:8px}
+#enchant::after,#again::after{content:none}
+#enchant::before,#again::before{content:"✦";font-size:1rem;line-height:1}
+#again::before{content:"↑"}
+body[data-state="safety"] #again::before{content:"←"}
+.back{border:0;background:none;color:var(--ink-soft);font:500 .9rem var(--body);padding:8px 14px;border-radius:999px;cursor:pointer}
+.back:hover{color:var(--ink)}
+
+.primary:hover{transform:translateY(-1px)}
+.primary:disabled{opacity:.55;cursor:default;transform:none}
+.examples{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;max-width:460px}
+.examples p{width:100%;margin:0;text-align:center;font-size:.8rem;color:var(--ink-soft)}
+.chip{border:1px solid var(--glass-edge);background:var(--chip-glass);-webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%);color:var(--ink);border-radius:999px;padding:9px 16px;font:500 .85rem var(--body);cursor:pointer;
+  transition:background .2s,transform .2s}
+.chip:hover{background:var(--btn);transform:translateY(-1px)}
+footer{text-align:center;font-size:.8rem;font-weight:500;line-height:1.5;color:var(--foot);text-shadow:var(--foot-shadow)}
+
+.link{border:0;background:none;padding:2px 0;font:inherit;color:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.link:hover{color:var(--ink)}
+.notice{margin:10px 0 0;font-size:.88rem;line-height:1.45;color:var(--ink)}
+.notice .link{margin-left:4px;color:var(--ink)}
+dialog{border:1px solid var(--glass-edge);border-radius:24px;padding:0;max-width:min(440px,calc(100vw - 32px));width:100%;color:var(--ink);background:var(--dialog-solid);box-shadow:0 20px 60px rgba(10,20,50,.3)}
+@supports (backdrop-filter:blur(1px)){dialog{background:var(--dialog);-webkit-backdrop-filter:blur(30px) saturate(160%);backdrop-filter:blur(30px) saturate(160%)}}
+dialog::backdrop{background:rgba(10,18,40,.35)}
+dialog form{padding:26px 24px 22px}
+dialog h2{margin:0 0 12px;font-weight:500;font-size:1.25rem}
+dialog p{margin:0 0 12px;font-size:.92rem;line-height:1.5}
+dialog .small{font-size:.82rem;color:var(--ink-soft)}
+dialog a{color:var(--ink)}
+dialog label{display:block;font-size:.8rem;font-weight:600;margin:4px 0 6px}
+dialog input{width:100%;box-sizing:border-box;border:1px solid var(--glass-edge);border-radius:12px;background:var(--glass);color:var(--ink);font:500 .95rem var(--body);padding:12px 14px}
+dialog input:focus{outline:2px solid var(--focus);outline-offset:1px}
+dialog .row{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:6px}
+dialog .primary{padding:11px 22px}
+dialog .primary::after{content:none}
+.ghost{border:1px solid var(--glass-edge);background:var(--chip-glass);color:var(--ink);border-radius:999px;font:600 .92rem var(--body);padding:10px 18px;cursor:pointer}
+#keyRemove{margin-right:auto}
+
+@media (prefers-reduced-motion: reduce){
+  .wrap,.bubble,.cloud,.stars{animation:none!important}
+  .result span{animation-duration:.01s}
+  .primary,.chip{transition:none}
+}
+</style>
+
+</head>
+<body>
+<div class="sky" aria-hidden="true"><div class="stars" id="stars"></div></div>
+<canvas id="fx" aria-hidden="true"></canvas>
+
+<main>
+  <p class="brand">reframe</p>
+
+  <div class="center">
+    <div class="wrap" id="wrap">
+      <div class="bubble" id="bubble" data-state="idle">
+        <button class="tap" id="tap" type="button">Tap to let a thought out<span>Write it the way it sounds in your head</span></button>
+        <p class="eyebrow" id="eyebrow" hidden></p>
+        <label for="thought" class="sr-only">Your thought</label>
+        <textarea id="thought" rows="4" maxlength="240" placeholder="e.g. I always mess everything up" hidden></textarea>
+        <p class="result" id="result" aria-live="polite" hidden></p>
+        <p class="tag" id="tag" hidden></p>
+        <p class="tag" id="note" hidden></p>
+        <p class="notice" id="notice" role="status" hidden></p>
+        <div class="safety" id="safety" hidden>
+          <h2 id="safetyTitle" tabindex="-1">This one deserves more than a reframe.</h2>
+          <p>It sounds like you're carrying something really heavy. Please reach out to someone who can be with you in it right now.</p>
+          <ul>
+            <li><b>SOS 24-hour hotline:</b> call 1767</li>
+            <li><b>SOS CareText (24 hours):</b> <a href="https://wa.me/6591511767" target="_blank" rel="noopener">WhatsApp 9151 1767</a></li>
+            <li><b>In immediate danger:</b> call 995</li>
+            <li><b>Outside Singapore:</b> <a href="https://findahelpline.com" target="_blank" rel="noopener">findahelpline.com</a></li>
+          </ul>
+        </div>
+      </div>
+      <span class="tail t1" aria-hidden="true"></span><span class="tail t2" aria-hidden="true"></span>
+    </div>
+
+    <div class="controls">
+      <button class="primary" id="enchant" type="button" hidden disabled>Reframe</button>
+      <button class="back" id="back" type="button" hidden>← Back</button>
+      <button class="primary" id="again" type="button" hidden>Let it float away</button>
+      <div class="examples" id="examples">
+        <p>Or try one of these</p>
+        <button class="chip" type="button">I always mess everything up</button>
+        <button class="chip" type="button">Nobody actually likes me</button>
+        <button class="chip" type="button">I'm not good enough for this job</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>Nothing you write is saved.<br><button class="link" id="keyOpen" type="button">Use your own API key</button></footer>
+</main>
+
+<dialog id="keyDialog" aria-labelledby="keyTitle">
+  <form method="dialog" id="keyForm">
+    <h2 id="keyTitle">Use your own API key</h2>
+    <p>This is optional. Reframe works without it. If today's free reframes run out, or you'd rather it ran on your own Anthropic account, you can paste a key here. The cost then goes to your account.</p>
+    <p><b>Where your key goes:</b> it stays in this browser tab and is sent straight to Anthropic. It never goes to the Reframe server, and it's forgotten when you close the tab.</p>
+    <p class="small">Tip: make a separate key with a low spend limit in the <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</p>
+    <label for="keyInput">Anthropic API key</label>
+    <input id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-..." inputmode="text">
+    <p class="small" id="keyMsg" role="status"></p>
+    <div class="row">
+      <button class="ghost" id="keyRemove" type="button" hidden>Remove key</button>
+      <button class="ghost" value="cancel" type="submit" formnovalidate>Cancel</button>
+      <button class="primary" id="keySave" value="save" type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

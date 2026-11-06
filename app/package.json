@@ -1,0 +1,17 @@
+{
+  "name": "reframe-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs && wrangler dev",
+    "deploy": "node build.mjs && wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261104.1",
+    "esbuild": "0.28.2",
+    "typescript": "^5.9.0",
+    "wrangler": "4.158.0"
+  }
+}

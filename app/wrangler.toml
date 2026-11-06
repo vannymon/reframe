@@ -1,0 +1,36 @@
+# Reframe: one Cloudflare Worker that serves the page and the /api/reframe endpoint.
+name = "reframe"
+main = "worker/index.ts"
+compatibility_date = "2026-10-01"
+
+# The page (built by build.mjs). The Worker only runs for /api/*.
+[assets]
+directory = "./dist"
+run_worker_first = ["/api/*"]
+
+[vars]
+# Most thoughts per day served on your key, for everyone combined. Raise or lower to fit your budget.
+DAILY_CAP = "300"
+# Extra origins allowed to call the API (comma-separated), e.g. if the page is hosted elsewhere. Same-origin always works.
+ALLOWED_ORIGINS = ""
+
+# Per-visitor limit: 5 thoughts per minute. Counters live in Cloudflare's memory and expire on their own.
+[[ratelimits]]
+name = "PER_VISITOR"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }
+
+# One small counter for the daily cap. It stores only today's date and a number.
+[[durable_objects.bindings]]
+name = "DAILY"
+class_name = "DailyCounter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DailyCounter"]
+
+# Never log requests: thought text must not end up anywhere.
+[observability]
+enabled = false
+
+# Secret, set with: npx wrangler secret put REFRAME_API_KEY
