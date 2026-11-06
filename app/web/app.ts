@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { runBrain, anthropicCaller, ApiError, prepareThought, CRISIS_RE } from "../../brain/brain-core.ts";
+import { runBrain, anthropicCaller, ApiError, hasCrisisWords, MAX_CHARS } from "../../brain/brain-core.ts";
 
 const $ = id => document.getElementById(id);
 const wrap=$('wrap'), bubble=$('bubble'), tap=$('tap'), ta=$('thought'), eyebrow=$('eyebrow'),
@@ -49,9 +49,12 @@ async function viaOwnKey(text,key){
   }
 }
 
+/* Emoji or punctuation with no words: ask gently for a few words instead of guessing. */
+const NO_WORDS_RE = /^[\p{Extended_Pictographic}\p{Emoji_Component}\p{P}\p{S}\s]+$/u;
+
 async function reframe(raw){
-  const text = prepareThought(raw);
-  const kw = CRISIS_RE.test(text);
+  const text = String(raw||'').trim();
+  const kw = hasCrisisWords(text);
   const key = getKey();
   let r, note='';
   try{
@@ -67,11 +70,12 @@ async function reframe(raw){
     if(kw) return {safety:true}; // never let an outage hide the safety screen
     return {error: e && e.code};
   }
-  if(r.category==="crisis") return {safety:true};
+  if(r.category==="crisis") return {safety:true, someoneElse:r.about==="someone_else"};
   if(r.category==="harm_to_others") return {pause:true};
-  if(r.category==="not_a_thought") return {nudge:true};
+  if(r.category==="not_a_thought") return {nudge: NO_WORDS_RE.test(text) ? 'words' : 'general'};
   const reframeText = String(r.reframe||"").trim();
   if(!reframeText) return {error:"empty"};
+  if(r.category==="positive") return {text:reframeText, savour:true, note};
   return {text:reframeText, kind:PATTERN_NAMES[r.pattern]||null, heavy:r.category==="heavy", note};
 }
 
@@ -81,6 +85,18 @@ const ERRORS = {
   key_rate_limited: "Your API key is being rate limited by Anthropic. Try again in a moment.",
   offline: "Couldn't reach Reframe. Check your connection and try again.",
 };
+const NUDGES = {
+  general: "Anything on your mind? It can be a worry or something good.",
+  words: "Want to put a few words to it? Even one is enough.",
+};
+const SAFETY_COPY = {
+  self: ["This one deserves more than a reframe.", "It sounds like you're carrying something really heavy. Please reach out to someone who can be with you in it right now."],
+  someoneElse: ["It sounds like you're worried about someone.", "That's a lot to hold. SOS can help you work out how to support them, and you can call 995 if they're in danger right now."],
+};
+function setSafetyCopy(someoneElse){
+  const [title, body] = someoneElse ? SAFETY_COPY.someoneElse : SAFETY_COPY.self;
+  $('safetyTitle').textContent = title; $('safetyBody').textContent = body;
+}
 const notice=$('notice');
 function showNotice(msg, withKeyLink){
   notice.textContent=msg;
@@ -96,28 +112,41 @@ function setState(s){
   notice.hidden=true;
   tap.hidden = s!=='idle';
   ta.hidden = !(s==='editing'||s==='charging');
-  result.hidden = s!=='revealed';
+  const shown = s==='revealed'||s==='savoured';
+  result.hidden = !shown;
   tag.hidden = s!=='revealed' || !tag.textContent;
   safety.hidden = s!=='safety';
   $('pause').hidden = s!=='pause';
   enchantBtn.hidden = s!=='editing';
   backBtn.hidden = s!=='editing';
-  again.hidden = !(s==='revealed'||s==='safety'||s==='pause');
+  again.hidden = !(shown||s==='safety'||s==='pause');
   examples.hidden = s!=='idle';
-  eyebrow.hidden = !(s==='editing'||s==='revealed');
-  eyebrow.textContent = s==='revealed' ? 'Another way to see it' : "What's the thought?";
-  again.textContent = (s==='safety'||s==='pause') ? 'Back' : 'Let it float away';
+  eyebrow.hidden = !(s==='editing'||shown);
+  eyebrow.textContent = s==='revealed' ? 'Another way to see it' : s==='savoured' ? 'Worth holding onto' : "What's the thought?";
+  again.textContent = (s==='safety'||s==='pause') ? 'Back' : s==='savoured' ? 'Let it float up' : 'Let it float away';
+  counter.hidden = s!=='editing' || ta.value.length < COUNTER_FROM;
+}
+
+/* Character counter: shown only near the limit, so long pastes are never cut silently. */
+const counter=$('counter');
+ta.maxLength = MAX_CHARS;
+const COUNTER_FROM = MAX_CHARS - 100;
+function updateCounter(){
+  const n = ta.value.length;
+  counter.hidden = bubble.dataset.state!=='editing' || n < COUNTER_FROM;
+  counter.textContent = `${n} / ${MAX_CHARS}`;
 }
 
 function startEditing(text){
   setState('editing');
   if(text!=null) ta.value=text;
   enchantBtn.disabled=!ta.value.trim();
+  updateCounter();
   ta.focus({preventScroll:true});
 }
 tap.addEventListener('click',()=>startEditing());
 examples.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>startEditing(c.textContent)));
-ta.addEventListener('input',()=>{enchantBtn.disabled=!ta.value.trim()});
+ta.addEventListener('input',()=>{enchantBtn.disabled=!ta.value.trim(); updateCounter();});
 ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enchant()}});
 enchantBtn.addEventListener('click',enchant);
 backBtn.addEventListener('click',()=>{ if(busy) return; ta.value=''; setState('idle'); tap.focus({preventScroll:true}); });
@@ -134,22 +163,26 @@ async function enchant(){
   const wait=Math.max(0,(reduce?0:1400)-(performance.now()-t0));
   await new Promise(res=>setTimeout(res,wait));
   charging=false; busy=false; ta.readOnly=false;
-  if(r.safety){ setState('safety'); $('safetyTitle').focus({preventScroll:true}); return; }
+  if(r.safety){ setSafetyCopy(r.someoneElse); setState('safety'); $('safetyTitle').focus({preventScroll:true}); return; }
   if(r.pause){ setState('pause'); $('pauseTitle').focus({preventScroll:true}); return; }
   if(r.nudge||r.error){
     setState('editing');
-    if(r.nudge){ eyebrow.textContent="Try writing what your inner critic is saying about you"; }
+    if(r.nudge){ eyebrow.textContent=NUDGES[r.nudge]; }
     else showNotice(ERRORS[r.error] || "That didn't work. Try again in a moment.", r.error==='daily_cap' && !getKey());
+    return;
+  }
+  if(r.savour){
+    // A happy thought isn't transformed, so no burst: the bubble warms slowly and sparkles drift upward.
+    if(!reduce) fx.rise();
+    showWords(r.text);
+    tag.textContent=''; $('note').textContent='';
+    setState('savoured'); $('note').hidden=true;
+    if(r.note){ notice.textContent=r.note; notice.hidden=false; }
     return;
   }
   bubble.classList.add('burst'); if(!reduce) fx.burst();
   setTimeout(()=>{
-    result.textContent='';
-    r.text.split(' ').forEach((w,i)=>{
-      const s=document.createElement('span'); s.textContent=w;
-      s.style.animationDelay=(reduce?0:i*60)+'ms';
-      result.append(s,' ');
-    });
+    showWords(r.text);
     tag.textContent=''; if(r.kind){ tag.append('Thinking pattern spotted: '); const b=document.createElement('b'); b.textContent=r.kind; tag.append(b); }
     $('note').textContent = r.heavy ? 'This sounds like a lot to carry. Talking to someone you trust can help.' : '';
     setState('revealed'); $('note').hidden=!r.heavy;
@@ -158,8 +191,17 @@ async function enchant(){
   },reduce?100:300);
 }
 
+function showWords(text){
+  result.textContent='';
+  text.split(' ').forEach((w,i)=>{
+    const s=document.createElement('span'); s.textContent=w;
+    s.style.animationDelay=(reduce?0:i*60)+'ms';
+    result.append(s,' ');
+  });
+}
+
 again.addEventListener('click',()=>{
-  const reset=()=>{ ta.value=''; result.textContent=''; tag.textContent=''; $('note').hidden=true; setState('idle'); };
+  const reset=()=>{ ta.value=''; result.textContent=''; tag.textContent=''; $('note').hidden=true; setSafetyCopy(false); setState('idle'); };
   if(reduce){ reset(); tap.focus(); return; }
   wrap.classList.add('away');
   setTimeout(()=>{ reset(); wrap.classList.remove('away'); wrap.classList.add('arrive');
@@ -180,6 +222,10 @@ const fx=(()=>{
     for(let i=0;i<110;i++){const a=Math.random()*Math.PI*2, s=2+Math.random()*6;
       parts.push({in:false,x:x+Math.cos(a)*rad*.25,y:y+Math.sin(a)*rad*.25,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,decay:.01+Math.random()*.016,size:1+Math.random()*3.2,col:pick()});}
     start();}
+  function rise(){const {x,y,rad}=center();
+    for(let i=0;i<46;i++){const a=Math.random()*Math.PI*2, r=rad*(.35+Math.random()*.75);
+      parts.push({in:false,x:x+Math.cos(a)*r,y:y+Math.sin(a)*r*.8,vx:(Math.random()-.5)*.5,vy:-(.35+Math.random()*.9),life:1,decay:.004+Math.random()*.006,size:1+Math.random()*2.4,col:pick(),float:true});}
+    start();}
   function charge(ms){chargeUntil=performance.now()+ms; start();}
   function start(){if(!running){running=true; requestAnimationFrame(tick);}}
   function dot(x,y,size,col,a){const r=size*3.2, g=ctx.createRadialGradient(x,y,0,x,y,r);
@@ -191,13 +237,15 @@ const fx=(()=>{
     parts=parts.filter(p=>{
       if(p.in){ p.a+=p.spin; p.d*=.952; if(p.d<10) return false;
         dot(p.cx+Math.cos(p.a)*p.d, p.cy+Math.sin(p.a)*p.d, p.size, p.col, Math.min(1,p.d/50)); }
+      else if(p.float){ p.x+=p.vx+Math.sin(now/600+p.y/40)*.15; p.y+=p.vy; p.life-=p.decay; if(p.life<=0) return false;
+        dot(p.x,p.y,p.size,p.col,Math.min(1,p.life*1.6)); }
       else { p.x+=p.vx; p.y+=p.vy; p.vx*=.955; p.vy=p.vy*.955-.03; p.life-=p.decay; if(p.life<=0) return false;
         dot(p.x,p.y,p.size,p.col,p.life); }
       return true;
     });
     if(parts.length||now<chargeUntil) requestAnimationFrame(tick); else {running=false; ctx.clearRect(0,0,W,H);}
   }
-  return {charge,burst};
+  return {charge,burst,rise};
 })();
 
 setState('idle');

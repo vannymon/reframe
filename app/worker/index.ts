@@ -1,7 +1,7 @@
 // Reframe API. Stateless: the thought is read, sent to Claude, and forgotten.
 // Nothing here logs, stores or forwards thought text, IPs or keys.
 import { DurableObject } from "cloudflare:workers";
-import { CRISIS_RE, CRISIS_RESULT, MAX_CHARS, anthropicCaller, prepareThought, runBrain } from "../../brain/brain-core.ts";
+import { CRISIS_RESULT, hasCrisisWords, MAX_CHARS, anthropicCaller, prepareThought, runBrain } from "../../brain/brain-core.ts";
 
 interface Env {
   REFRAME_API_KEY: string;
@@ -45,8 +45,8 @@ async function visitorKey(req: Request): Promise<string> {
   return btoa(String.fromCharCode(...new Uint8Array(digest).slice(0, 12)));
 }
 
-const publicResult = (r: { category: string; reframe: string; pattern: string }) =>
-  ({ category: r.category, reframe: r.reframe, pattern: r.pattern });
+const publicResult = (r: { category: string; reframe: string; pattern: string; about: string }) =>
+  ({ category: r.category, reframe: r.reframe, pattern: r.pattern, about: r.about });
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -71,10 +71,10 @@ export default {
     }
     if (typeof thought !== "string" || thought.length > MAX_CHARS * 2) return json({ error: "bad_request" }, 400, cors);
     const text = prepareThought(thought);
-    if (!text) return json({ category: "not_a_thought", reframe: "", pattern: "none" }, 200, cors);
+    if (!text) return json({ category: "not_a_thought", reframe: "", pattern: "none", about: "self" }, 200, cors);
 
     // Crisis language always gets the safety screen, even when the visitor is rate limited or the day's cap is used up.
-    const keywordCrisis = CRISIS_RE.test(text);
+    const keywordCrisis = hasCrisisWords(thought);
 
     const { success } = await env.PER_VISITOR.limit({ key: await visitorKey(req) });
     if (!success) return keywordCrisis ? json(publicResult(CRISIS_RESULT), 200, cors) : json({ error: "rate_limited" }, 429, cors);
@@ -84,7 +84,7 @@ export default {
     if (!allowed) return keywordCrisis ? json(publicResult(CRISIS_RESULT), 200, cors) : json({ error: "daily_cap" }, 429, cors);
 
     try {
-      const result = await runBrain(text, anthropicCaller(env.REFRAME_API_KEY));
+      const result = await runBrain(thought, anthropicCaller(env.REFRAME_API_KEY)); // the brain checks the full text, then trims it
       return json(publicResult(result), 200, cors);
     } catch {
       // No details: an error object could carry the thought.

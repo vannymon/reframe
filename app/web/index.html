@@ -141,6 +141,12 @@ textarea::placeholder{color:var(--ink-faint);opacity:1}
 @keyframes flash{0%{opacity:0;transform:scale(.5)}22%{opacity:1}100%{opacity:0;transform:scale(1.35)}}
 .bubble[data-state="revealed"]{background:linear-gradient(160deg,var(--ench-a),var(--ench-b) 50%,var(--glass-end)),var(--glass);animation:morph 10s ease-in-out infinite alternate,breathe 4s ease-in-out infinite}
 @keyframes breathe{0%,100%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 34px 2px rgba(255,255,255,.45)}50%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 60px 10px rgba(255,255,255,.6)}}
+/* savoured: a happy thought warms slowly instead of bursting */
+.bubble[data-state="savoured"]{background:linear-gradient(160deg,var(--ench-b),var(--ench-a) 55%,var(--glass-end)),var(--glass);animation:morph 10s ease-in-out infinite alternate,warm 2.4s ease-out forwards,breatheWarm 5s 2.4s ease-in-out infinite}
+@keyframes warm{from{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 0 0 rgba(255,255,255,0)}to{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 46px 6px rgba(255,255,255,.55),0 0 110px 26px color-mix(in srgb,var(--glow-2) 28%,transparent)}}
+@keyframes breatheWarm{0%,100%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 46px 6px rgba(255,255,255,.55),0 0 110px 26px color-mix(in srgb,var(--glow-2) 28%,transparent)}50%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 64px 12px rgba(255,255,255,.65),0 0 140px 36px color-mix(in srgb,var(--glow-2) 36%,transparent)}}
+body[data-state="savoured"] .tail{background:linear-gradient(160deg,var(--ench-b),var(--ench-a)),var(--glass)}
+.counter{font-size:.75rem}
 body[data-state="revealed"] .tail{background:linear-gradient(160deg,var(--ench-a),var(--ench-b)),var(--glass)}
 
 /* safety */
@@ -197,6 +203,7 @@ dialog .primary::after{content:none}
 
 @media (prefers-reduced-motion: reduce){
   .wrap,.bubble,.cloud,.stars{animation:none!important}
+  .bubble[data-state="savoured"]{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 46px 6px rgba(255,255,255,.55);transition:box-shadow .8s ease}
   .result span{animation-duration:.01s}
   .primary,.chip{transition:none}
 }
@@ -216,7 +223,8 @@ dialog .primary::after{content:none}
         <button class="tap" id="tap" type="button">Tap to let a thought out<span>Write it the way it sounds in your head</span></button>
         <p class="eyebrow" id="eyebrow" hidden></p>
         <label for="thought" class="sr-only">Your thought</label>
-        <textarea id="thought" rows="4" maxlength="240" placeholder="e.g. I always mess everything up" hidden></textarea>
+        <textarea id="thought" rows="4" maxlength="500" placeholder="e.g. I always mess everything up" hidden></textarea>
+        <p class="tag counter" id="counter" aria-live="polite" hidden></p>
         <p class="result" id="result" aria-live="polite" hidden></p>
         <p class="tag" id="tag" hidden></p>
         <p class="tag" id="note" hidden></p>
@@ -232,7 +240,7 @@ dialog .primary::after{content:none}
         </div>
         <div class="safety" id="safety" hidden>
           <h2 id="safetyTitle" tabindex="-1">This one deserves more than a reframe.</h2>
-          <p>It sounds like you're carrying something really heavy. Please reach out to someone who can be with you in it right now.</p>
+          <p id="safetyBody">It sounds like you're carrying something really heavy. Please reach out to someone who can be with you in it right now.</p>
           <ul>
             <li><b>SOS 24-hour hotline:</b> call 1767</li>
             <li><b>SOS CareText (24 hours):</b> <a href="https://wa.me/6591511767" target="_blank" rel="noopener">WhatsApp 9151 1767</a></li>

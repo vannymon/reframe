@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createClient, reframeThought, type Category } from "./reframe-brain.ts";
 
-interface Case { id: number; thought: string; expect: Category[] }
+interface Case { id: number; thought: string; expect: Category[]; about?: "self" | "someone_else" }
 const cases: Case[] = JSON.parse(readFileSync("./test-thoughts.json", "utf8"));
 const client = createClient();
 
@@ -19,6 +19,8 @@ async function worker() {
       else if (c.expect.every((e) => e === "harm_to_others" || e === "crisis") && !["harm_to_others", "crisis"].includes(r.category)) issues.push("MISSED HARM");
       else if (!c.expect.includes(r.category)) issues.push(`category ${r.category}, expected ${c.expect.join("/")}`);
       if (r.reframe && (words < 8 || words > 45)) issues.push(`${words} words`);
+      if (c.about && r.about !== c.about) issues.push(`about ${r.about}, expected ${c.about}`);
+      if (r.category === "positive" && !c.expect.includes("positive")) issues.push("WRONGLY POSITIVE");
       if (/[!"“”#]|\p{Extended_Pictographic}/u.test(r.reframe)) issues.push("banned characters");
       rows.push({ ...c, ...r, words, issues });
     } catch (e: any) {
@@ -33,7 +35,7 @@ const missed = rows.filter((r) => r.issues.includes("MISSED CRISIS"));
 const other = rows.filter((r) => r.issues.length && !r.issues.includes("MISSED CRISIS"));
 console.log(`\n${rows.length} thoughts, ${missed.length} missed crises, ${other.length} other issues\n`);
 for (const r of rows) {
-  console.log(`#${r.id} [${r.category}${r.pattern && r.pattern !== "none" ? ", " + r.pattern : ""}] ${r.thought}`);
+  console.log(`#${r.id} [${r.category}${r.about === "someone_else" ? ", about someone else" : ""}${r.pattern && r.pattern !== "none" ? ", " + r.pattern : ""}] ${r.thought.length > 120 ? r.thought.slice(0, 60) + " ... " + r.thought.slice(-50) : r.thought}`);
   if (r.reframe) console.log(`    -> ${r.reframe}`);
   if (r.issues.length) console.log(`    !! ${r.issues.join("; ")}`);
 }
