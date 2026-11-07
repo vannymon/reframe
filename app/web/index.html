@@ -108,7 +108,7 @@ main{position:relative;z-index:2;min-height:100%;box-sizing:border-box;display:g
 /* Glow halo behind the bubble. Only its opacity and scale animate, which the GPU handles without repainting. */
 .wrap::before{content:"";position:absolute;inset:4%;z-index:-1;border-radius:50%;pointer-events:none;opacity:0;transform:scale(.92);
   box-shadow:0 0 50px 8px color-mix(in srgb,var(--glow) 75%,transparent),0 0 130px 40px color-mix(in srgb,var(--glow-2) 40%,transparent);
-  transition:opacity 1.4s ease-in,transform 1.4s ease-in}
+  transition:opacity .9s ease-in,transform .9s ease-in}
 body[data-state="charging"] .wrap::before{opacity:1;transform:none}
 body[data-state="revealed"] .wrap::before{box-shadow:0 0 60px 10px rgba(255,255,255,.6);transform:none;transition:opacity .4s ease-out;animation:breathe 4s ease-in-out infinite}
 body[data-state="savoured"] .wrap::before{box-shadow:0 0 64px 12px rgba(255,255,255,.65),0 0 140px 36px color-mix(in srgb,var(--glow-2) 36%,transparent);transform:none;transition:opacity 2.4s ease-out,transform 2.4s ease-out;animation:breathe 5s 2.4s ease-in-out infinite}
@@ -136,7 +136,7 @@ textarea::placeholder{color:var(--ink-faint);opacity:1}
 
 /* enchantment */
 .bubble[data-state="charging"]{transform:scale(.965)}
-.bubble[data-state="charging"] textarea{animation:dissolve 1.45s ease-in forwards}
+.bubble[data-state="charging"] textarea{animation:dissolve .9s ease-in forwards}
 @keyframes dissolve{60%{opacity:.5}to{opacity:0;transform:scale(1.06) translateY(-6px)}}
 .bubble.burst::after{content:"";position:absolute;inset:-25%;border-radius:50%;pointer-events:none;
   background:radial-gradient(circle,rgba(255,255,255,.95),color-mix(in srgb,var(--glow) 50%,transparent) 38%,transparent 70%);animation:flash .95s ease-out forwards}

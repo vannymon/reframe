@@ -160,9 +160,9 @@ async function enchant(){
   let charging=true;
   (function keep(){ if(!reduce&&charging){ fx.charge(700); setTimeout(keep,600);} })();
   const r=await reframe(t);
-  const wait=Math.max(0,(reduce?0:1400)-(performance.now()-t0));
+  const wait=Math.max(0,(reduce?0:900)-(performance.now()-t0)); // a short minimum so a fast answer still gets a moment of sparkle
   await new Promise(res=>setTimeout(res,wait));
-  charging=false; busy=false; ta.readOnly=false;
+  charging=false; busy=false; ta.readOnly=false; fx.settle();
   if(r.safety){ setSafetyCopy(r.someoneElse); setState('safety'); $('safetyTitle').focus({preventScroll:true}); return; }
   if(r.pause){ setState('pause'); $('pauseTitle').focus({preventScroll:true}); return; }
   if(r.nudge||r.error){
@@ -236,6 +236,8 @@ const fx=(()=>{
       parts.push({in:false,x:x+Math.cos(a)*r,y:y+Math.sin(a)*r*.8,vx:(Math.random()-.5)*.5,vy:-(.35+Math.random()*.9),life:1,decay:.004+Math.random()*.006,size:1+Math.random()*2.4,col:pick(),float:true});}
     start();}
   function charge(ms){chargeUntil=performance.now()+ms; start();}
+  // The answer is in: stop spawning and pull the swirling dots in quickly, so the reveal isn't held up.
+  function settle(){chargeUntil=0; for(const p of parts) if(p.in) p.fast=true;}
   function start(){if(!running){running=true; requestAnimationFrame(tick);}}
   function dot(x,y,size,col,a){const r=size*3.2;
     ctx.globalAlpha=a; ctx.drawImage(sprites[col],x-r,y-r,r*2,r*2);}
@@ -243,7 +245,7 @@ const fx=(()=>{
     ctx.clearRect(0,0,W,H);
     if(now<chargeUntil && parts.length<MAX_PARTS){ const c=center(); for(let i=0;i<4;i++) spawnIn(c); }
     parts=parts.filter(p=>{
-      if(p.in){ p.a+=p.spin; p.d*=.952; if(p.d<10) return false;
+      if(p.in){ p.a+=p.spin; p.d*=p.fast?.86:.952; if(p.d<10) return false;
         dot(p.cx+Math.cos(p.a)*p.d, p.cy+Math.sin(p.a)*p.d, p.size, p.col, Math.min(1,p.d/50)); }
       else if(p.float){ p.x+=p.vx+Math.sin(now/600+p.y/40)*.15; p.y+=p.vy; p.life-=p.decay; if(p.life<=0) return false;
         dot(p.x,p.y,p.size,p.col,Math.min(1,p.life*1.6)); }
@@ -254,7 +256,7 @@ const fx=(()=>{
     ctx.globalAlpha=1;
     if(parts.length||now<chargeUntil) requestAnimationFrame(tick); else {running=false; ctx.clearRect(0,0,W,H);}
   }
-  return {charge,burst,rise};
+  return {charge,burst,rise,settle};
 })();
 
 setState('idle');
