@@ -72,7 +72,7 @@ body{background:var(--sky-mid);color:var(--ink);font-family:var(--body);font-siz
 .sky{position:fixed;inset:0;z-index:0;overflow:hidden;background:linear-gradient(to bottom,var(--sky-top),var(--sky-mid) 52%,var(--sky-low))}
 .stars{position:absolute;top:0;left:0;width:2px;height:2px;border-radius:50%;opacity:var(--star);animation:twinkle 5s ease-in-out infinite alternate}
 @keyframes twinkle{to{opacity:calc(var(--star) * .45)}}
-.cloud{position:absolute;left:0;top:var(--top);width:var(--w);height:calc(var(--w) * .3);border-radius:50%;background:var(--cloud);filter:blur(14px);opacity:var(--o);animation:drift var(--dur) linear infinite;animation-delay:var(--delay)}
+.cloud{position:absolute;left:0;top:var(--top);width:var(--w);height:calc(var(--w) * .3);border-radius:50%;background:radial-gradient(closest-side,var(--cloud) 35%,transparent);opacity:var(--o);animation:drift var(--dur) linear infinite;animation-delay:var(--delay);will-change:transform}
 .cloud::before,.cloud::after{content:"";position:absolute;background:inherit;border-radius:50%}
 .cloud::before{width:52%;height:150%;left:14%;top:-62%}
 .cloud::after{width:38%;height:120%;left:50%;top:-40%}
@@ -104,13 +104,16 @@ main{position:relative;z-index:2;min-height:100%;box-sizing:border-box;display:g
   border:1px solid var(--glass-edge);
   box-shadow:inset 0 1px 0 var(--glass-shine),inset 0 -18px 40px -20px rgba(255,255,255,.35),inset 0 0 0 1px rgba(255,255,255,.06),0 30px 60px -24px var(--shadow);
   border-radius:50% 50% 48% 52% / 54% 50% 50% 46%;
-  animation:morph 10s ease-in-out infinite alternate;
   transition:transform .6s cubic-bezier(.3,.7,.3,1),background .9s ease}
+/* Glow halo behind the bubble. Only its opacity and scale animate, which the GPU handles without repainting. */
+.wrap::before{content:"";position:absolute;inset:4%;z-index:-1;border-radius:50%;pointer-events:none;opacity:0;transform:scale(.92);
+  box-shadow:0 0 50px 8px color-mix(in srgb,var(--glow) 75%,transparent),0 0 130px 40px color-mix(in srgb,var(--glow-2) 40%,transparent);
+  transition:opacity .9s ease-in,transform .9s ease-in}
+body[data-state="charging"] .wrap::before{opacity:1;transform:none}
+body[data-state="revealed"] .wrap::before{box-shadow:0 0 60px 10px rgba(255,255,255,.6);transform:none;transition:opacity .4s ease-out;animation:breathe 4s ease-in-out infinite}
+body[data-state="savoured"] .wrap::before{box-shadow:0 0 64px 12px rgba(255,255,255,.65),0 0 140px 36px color-mix(in srgb,var(--glow-2) 36%,transparent);transform:none;transition:opacity 2.4s ease-out,transform 2.4s ease-out;animation:breathe 5s 2.4s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.6}50%{opacity:1}}
 .bubble::before{content:"";position:absolute;top:10%;left:15%;width:30%;height:13%;border-radius:50%;background:radial-gradient(ellipse at center,var(--glass-shine),transparent 70%);transform:rotate(-22deg);pointer-events:none;opacity:.8}
-@keyframes morph{
-  33%{border-radius:46% 54% 52% 48% / 50% 46% 54% 50%}
-  66%{border-radius:53% 47% 46% 54% / 47% 54% 46% 53%}
-  100%{border-radius:48% 52% 54% 46% / 52% 48% 52% 48%}}
 .tail{position:absolute;border-radius:50%;background:var(--glass);-webkit-backdrop-filter:blur(20px) saturate(160%);backdrop-filter:blur(20px) saturate(160%);border:1px solid var(--glass-edge);box-shadow:inset 0 1px 0 var(--glass-shine);transition:background .9s}
 .t1{width:34px;height:34px;left:16%;bottom:-30px}
 .t2{width:16px;height:16px;left:9%;bottom:-56px}
@@ -124,27 +127,23 @@ main{position:relative;z-index:2;min-height:100%;box-sizing:border-box;display:g
 textarea{width:100%;box-sizing:border-box;border:0;background:transparent;resize:none;text-align:center;color:var(--ink);font:400 1.2rem/1.45 var(--body);padding:4px;outline:none}
 textarea::placeholder{color:var(--ink-faint);opacity:1}
 .result{margin:0;font-weight:400;font-size:clamp(1.2rem,4.8vw,1.5rem);line-height:1.4;letter-spacing:-.01em;text-wrap:balance}
-.result span{display:inline-block;opacity:0;filter:blur(6px);animation:wordIn .7s ease-out forwards}
-@keyframes wordIn{to{opacity:1;filter:blur(0)}}
+.result span{display:inline-block;opacity:0;animation:wordIn .6s ease-out forwards}
+@keyframes wordIn{from{opacity:0;transform:translateY(.25em)}to{opacity:1;transform:none}}
 .tag{margin:0;font-size:.8rem;color:var(--ink-soft)}
 #tag:not(:empty){padding:5px 12px;border-radius:999px;background:var(--chip-glass);border:1px solid var(--glass-edge)}
 #note{max-width:30ch}
 .tag b{font-weight:600;color:var(--ink)}
 
 /* enchantment */
-.bubble[data-state="charging"]{transform:scale(.965);animation:morph 10s ease-in-out infinite alternate,hum 1.5s ease-in forwards}
-@keyframes hum{to{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 50px 8px color-mix(in srgb,var(--glow) 75%,transparent),0 0 130px 40px color-mix(in srgb,var(--glow-2) 40%,transparent)}}
-.bubble[data-state="charging"] textarea{animation:dissolve 1.45s ease-in forwards}
-@keyframes dissolve{60%{opacity:.5}to{opacity:0;filter:blur(9px);letter-spacing:.25em}}
+.bubble[data-state="charging"]{transform:scale(.965)}
+.bubble[data-state="charging"] textarea{animation:dissolve .9s ease-in forwards}
+@keyframes dissolve{60%{opacity:.5}to{opacity:0;transform:scale(1.06) translateY(-6px)}}
 .bubble.burst::after{content:"";position:absolute;inset:-25%;border-radius:50%;pointer-events:none;
   background:radial-gradient(circle,rgba(255,255,255,.95),color-mix(in srgb,var(--glow) 50%,transparent) 38%,transparent 70%);animation:flash .95s ease-out forwards}
 @keyframes flash{0%{opacity:0;transform:scale(.5)}22%{opacity:1}100%{opacity:0;transform:scale(1.35)}}
-.bubble[data-state="revealed"]{background:linear-gradient(160deg,var(--ench-a),var(--ench-b) 50%,var(--glass-end)),var(--glass);animation:morph 10s ease-in-out infinite alternate,breathe 4s ease-in-out infinite}
-@keyframes breathe{0%,100%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 34px 2px rgba(255,255,255,.45)}50%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 60px 10px rgba(255,255,255,.6)}}
+.bubble[data-state="revealed"]{background:linear-gradient(160deg,var(--ench-a),var(--ench-b) 50%,var(--glass-end)),var(--glass)}
 /* savoured: a happy thought warms slowly instead of bursting */
-.bubble[data-state="savoured"]{background:linear-gradient(160deg,var(--ench-b),var(--ench-a) 55%,var(--glass-end)),var(--glass);animation:morph 10s ease-in-out infinite alternate,warm 2.4s ease-out forwards,breatheWarm 5s 2.4s ease-in-out infinite}
-@keyframes warm{from{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 0 0 rgba(255,255,255,0)}to{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 46px 6px rgba(255,255,255,.55),0 0 110px 26px color-mix(in srgb,var(--glow-2) 28%,transparent)}}
-@keyframes breatheWarm{0%,100%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 46px 6px rgba(255,255,255,.55),0 0 110px 26px color-mix(in srgb,var(--glow-2) 28%,transparent)}50%{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 64px 12px rgba(255,255,255,.65),0 0 140px 36px color-mix(in srgb,var(--glow-2) 36%,transparent)}}
+.bubble[data-state="savoured"]{background:linear-gradient(160deg,var(--ench-b),var(--ench-a) 55%,var(--glass-end)),var(--glass)}
 body[data-state="savoured"] .tail{background:linear-gradient(160deg,var(--ench-b),var(--ench-a)),var(--glass)}
 .counter{font-size:.75rem}
 body[data-state="revealed"] .tail{background:linear-gradient(160deg,var(--ench-a),var(--ench-b)),var(--glass)}
@@ -202,8 +201,8 @@ dialog .primary::after{content:none}
 #keyRemove{margin-right:auto}
 
 @media (prefers-reduced-motion: reduce){
-  .wrap,.bubble,.cloud,.stars{animation:none!important}
-  .bubble[data-state="savoured"]{box-shadow:inset 0 1px 0 var(--glass-shine),0 0 46px 6px rgba(255,255,255,.55);transition:box-shadow .8s ease}
+  .wrap,.wrap::before,.bubble,.cloud,.stars{animation:none!important}
+  .wrap::before{transition:opacity .6s ease!important}
   .result span{animation-duration:.01s}
   .primary,.chip{transition:none}
 }
