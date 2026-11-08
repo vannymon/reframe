@@ -34,6 +34,7 @@ async function viaServer(text){
   try{ res = await fetch(API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({thought:text}),credentials:'omit'}); }
   catch{ throw {code:'offline'}; }
   const body = await res.json().catch(()=>({}));
+  showLeft(body.left);
   if(!res.ok) throw {code: body.error || 'unavailable'};
   return body;
 }
@@ -249,6 +250,18 @@ const fx=(()=>{
 })();
 
 setState('idle');
+
+/* how many free reframes are left today, shared by everyone */
+const STATUS = API.replace(/\/reframe$/, '/status');
+const leftEl=$('left');
+function showLeft(n){
+  if(typeof n!=='number' || n<0) return;
+  leftEl.textContent = n===0 ? "Today's free reframes are used up. More tomorrow."
+    : n===1 ? 'About 1 free reframe left today, shared by everyone.'
+    : `About ${n.toLocaleString()} free reframes left today, shared by everyone.`;
+  leftEl.hidden=false;
+}
+fetch(STATUS,{credentials:'omit'}).then(r=>r.ok?r.json():null).then(b=>b&&showLeft(b.left)).catch(()=>{});
 
 /* own-key settings */
 const keyDialog=$('keyDialog'), keyInput=$('keyInput'), keyMsg=$('keyMsg'), keyRemove=$('keyRemove'), keyOpen=$('keyOpen');

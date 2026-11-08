@@ -179,6 +179,8 @@ body[data-state="safety"] #again::before,body[data-state="pause"] #again::before
   transition:background .2s,transform .2s}
 .chip:hover{background:var(--btn);transform:translateY(-1px)}
 footer{text-align:center;font-size:.8rem;font-weight:500;line-height:1.5;color:var(--foot);text-shadow:var(--foot-shadow)}
+.left{display:block;margin-bottom:4px}
+.left[hidden]{display:none}
 
 .link{border:0;background:none;padding:2px 0;font:inherit;color:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 .link:hover{color:var(--ink)}
@@ -265,7 +267,7 @@ dialog .primary::after{content:none}
     </div>
   </div>
 
-  <footer>Nothing you write is saved.<br><button class="link" id="keyOpen" type="button">Use your own API key</button></footer>
+  <footer><span class="left" id="left" aria-live="polite" hidden></span>Nothing you write is saved.<br><button class="link" id="keyOpen" type="button">Use your own API key</button></footer>
 </main>
 
 <dialog id="keyDialog" aria-labelledby="keyTitle">

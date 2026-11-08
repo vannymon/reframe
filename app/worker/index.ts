@@ -5,21 +5,85 @@ import { CRISIS_RESULT, hasCrisisWords, MAX_CHARS, anthropicCaller, prepareThoug
 
 interface Env {
   REFRAME_API_KEY: string;
+  DAILY_BUDGET_USD: string;
   DAILY_CAP: string;
   ALLOWED_ORIGINS: string;
   PER_VISITOR: RateLimit;
   DAILY: DurableObjectNamespace<DailyCounter>;
 }
 
-/** Counts today's model calls on the owner's key. Holds only {day, count}. */
+// Anthropic list prices in US dollars per million tokens. A refusal can fall back to another model, so price by the model that answered.
+// An unknown model is priced at the most expensive rate, so a surprise never undercounts.
+const PRICES: Record<string, { input: number; output: number }> = {
+  "claude-opus-5-5": { input: 4, output: 20 },
+  "claude-opus-5": { input: 5, output: 25 },
+  "claude-opus-4-8": { input: 5, output: 25 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-sonnet-5": { input: 2, output: 10 },
+  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+};
+const PRICIEST = { input: 10, output: 50 };
+
+/** Real cost of one response in micro-dollars, from the usage the API reports. */
+export function costMicros(res: any): number {
+  const u = res?.usage ?? {};
+  const p = PRICES[String(res?.model ?? "").replace(/-\d{8}$/, "")] ?? PRICIEST;
+  const tokens = (n: unknown) => (typeof n === "number" && n > 0 ? n : 0);
+  const inputMTok =
+    tokens(u.input_tokens) + tokens(u.cache_creation_input_tokens) * 1.25 + tokens(u.cache_read_input_tokens) * 0.1;
+  return Math.ceil(inputMTok * p.input + tokens(u.output_tokens) * p.output); // tokens x $/MTok = micro-dollars
+}
+
+// Held back while a request is in flight: about 2.5k input tokens plus the full 2,048 output tokens on Opus 5.5, rounded up.
+// This stops a burst of parallel requests from going over the budget.
+const RESERVE_MICROS = 55_000;
+// Used for the "left today" estimate until a few real requests have been counted.
+const TYPICAL_MICROS = 15_000;
+
+type Day = { day: string; spent: number; held: number; count: number };
+const sgDate = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10); // Singapore date
+
+/** Tracks today's spend on the owner's key. Holds only {day, spent, held, count}: no thoughts, no visitors. */
 export class DailyCounter extends DurableObject {
-  async take(cap: number): Promise<boolean> {
-    const day = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10); // Singapore date
-    const cur = (await this.ctx.storage.get<{ day: string; count: number }>("c")) ?? { day, count: 0 };
-    const count = cur.day === day ? cur.count : 0;
-    if (count >= cap) return false;
-    await this.ctx.storage.put("c", { day, count: count + 1 });
-    return true;
+  private async today(): Promise<Day> {
+    const day = sgDate();
+    const cur = await this.ctx.storage.get<Day>("d");
+    return cur && cur.day === day ? cur : { day, spent: 0, held: 0, count: 0 };
+  }
+
+  private left(d: Day, budget: number, cap: number): number {
+    const avg = d.count >= 5 ? d.spent / d.count : TYPICAL_MICROS;
+    // reserve() needs a full hold's worth of room for the last one, so count that one separately.
+    const room = budget - d.spent - d.held - RESERVE_MICROS;
+    let n = room < 0 ? 0 : Math.floor(room / Math.max(avg, 1)) + 1;
+    if (cap > 0) n = Math.min(n, Math.max(0, cap - d.count));
+    return n;
+  }
+
+  /** Holds money for one request. Returns false when today's budget or count cap is used up. */
+  async reserve(budget: number, cap: number): Promise<{ ok: boolean; day: string; left: number }> {
+    const d = await this.today();
+    if (d.spent + d.held + RESERVE_MICROS > budget || (cap > 0 && d.count >= cap)) return { ok: false, day: d.day, left: 0 };
+    d.held += RESERVE_MICROS;
+    await this.ctx.storage.put("d", d);
+    return { ok: true, day: d.day, left: this.left(d, budget, cap) };
+  }
+
+  /** Swaps the hold for what the request really cost (0 if the call never reached the model). */
+  async settle(day: string, actual: number, budget: number, cap: number): Promise<number> {
+    const d = await this.today();
+    if (d.day === day) {
+      d.held = Math.max(0, d.held - RESERVE_MICROS);
+      d.spent += actual;
+      if (actual > 0) d.count += 1;
+      await this.ctx.storage.put("d", d);
+    }
+    return this.left(d, budget, cap);
+  }
+
+  async status(budget: number, cap: number): Promise<{ left: number; spentUsd: number }> {
+    const d = await this.today();
+    return { left: this.left(d, budget, cap), spentUsd: Math.round(d.spent / 1e4) / 100 };
   }
 }
 
@@ -51,6 +115,16 @@ const publicResult = (r: { category: string; reframe: string; pattern: string; a
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
+    const budget = Math.round((Number(env.DAILY_BUDGET_USD) || 0) * 1e6);
+    const cap = Number(env.DAILY_CAP) || 0;
+    const counter = () => env.DAILY.get(env.DAILY.idFromName("global"));
+
+    if (url.pathname === "/api/status") {
+      // How many free reframes are left today, for everyone combined. Spend is shown to nobody; only the count.
+      if (req.method !== "GET") return json({ error: "method_not_allowed" }, 405);
+      const { left } = await counter().status(budget, cap);
+      return json({ left });
+    }
     if (url.pathname !== "/api/reframe") return json({ error: "not_found" }, 404);
 
     const cors = corsHeaders(req, env);
@@ -79,14 +153,23 @@ export default {
     const { success } = await env.PER_VISITOR.limit({ key: await visitorKey(req) });
     if (!success) return keywordCrisis ? json(publicResult(CRISIS_RESULT), 200, cors) : json({ error: "rate_limited" }, 429, cors);
 
-    const cap = Number(env.DAILY_CAP) || 0;
-    const allowed = await env.DAILY.get(env.DAILY.idFromName("global")).take(cap);
-    if (!allowed) return keywordCrisis ? json(publicResult(CRISIS_RESULT), 200, cors) : json({ error: "daily_cap" }, 429, cors);
+    const hold = await counter().reserve(budget, cap);
+    if (!hold.ok) return keywordCrisis ? json(publicResult(CRISIS_RESULT), 200, cors) : json({ error: "daily_cap", left: 0 }, 429, cors);
 
+    // Wrap the caller so the real token usage of every response is counted, including a failed parse after a good call.
+    let spent = 0;
+    const call = anthropicCaller(env.REFRAME_API_KEY);
+    const counted = async (body: unknown) => {
+      const res = await call(body);
+      spent += costMicros(res);
+      return res;
+    };
     try {
-      const result = await runBrain(thought, anthropicCaller(env.REFRAME_API_KEY)); // the brain checks the full text, then trims it
-      return json(publicResult(result), 200, cors);
+      const result = await runBrain(thought, counted); // the brain checks the full text, then trims it
+      const left = await counter().settle(hold.day, spent, budget, cap);
+      return json({ ...publicResult(result), left }, 200, cors);
     } catch {
+      await counter().settle(hold.day, spent, budget, cap);
       // No details: an error object could carry the thought.
       return json({ error: "unavailable" }, 502, cors);
     }
