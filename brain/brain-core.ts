@@ -3,6 +3,8 @@
 // Stateless: nothing is stored or logged.
 
 export const MODEL = "claude-opus-5-5";
+/** Classifies every thought sent to an open model (Llama, Qwen), so the safety call is always made by Claude. Cheap: about $0.0003 a thought. */
+export const SAFETY_MODEL = "claude-haiku-5-5";
 
 export type Category = "crisis" | "harm_to_others" | "heavy" | "everyday" | "positive" | "not_a_thought";
 export type About = "self" | "someone_else";
@@ -129,11 +131,12 @@ export function hasCrisisWords(thought: string): boolean {
   return CRISIS_RE.test(String(thought ?? ""));
 }
 
-export function requestBody(text: string) {
+export function requestBody(text: string, model: string = MODEL) {
   return {
-    model: MODEL,
+    model,
     max_tokens: 2048,
-    fallbacks: "default",
+    // Server-side refusal fallback exists for Opus, not Haiku. A Haiku refusal is still handled: runBrain treats it as crisis.
+    ...(model.startsWith("claude-haiku") ? {} : { fallbacks: "default" }),
     system: SYSTEM_PROMPT,
     output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
     messages: [{ role: "user", content: `<thought>${text}</thought>` }],
@@ -141,14 +144,14 @@ export function requestBody(text: string) {
 }
 
 /** Classifies and reframes one thought. `call` sends the request body to the Messages API and returns the parsed response. */
-export async function runBrain(thought: string, call: (body: ReturnType<typeof requestBody>) => Promise<any>): Promise<ReframeResult> {
+export async function runBrain(thought: string, call: (body: ReturnType<typeof requestBody>) => Promise<any>, model: string = MODEL): Promise<ReframeResult> {
   const text = prepareThought(thought);
   if (!text) return { category: "not_a_thought", reframe: "", pattern: "none", about: "self", source: "empty_input" };
   const keywordCrisis = hasCrisisWords(thought);
 
   let result: ReframeResult;
   try {
-    const res = await call(requestBody(text));
+    const res = await call(requestBody(text, model));
     // A refusal on this kind of input most likely means the content was distressing: fail safe.
     if (res.stop_reason === "refusal") return { category: "crisis", reframe: "", pattern: "none", about: "self", source: "model" };
     if (res.stop_reason === "max_tokens") throw new Error("Response was cut off");
@@ -173,6 +176,90 @@ export async function runBrain(thought: string, call: (body: ReturnType<typeof r
   if (!["heavy", "everyday", "positive"].includes(result.category)) result = { ...result, reframe: "" };
   if (result.category === "positive") result = { ...result, pattern: "none" };
   return result;
+}
+
+// ---------- Open models (Llama, Qwen on Cloudflare Workers AI) ----------
+// An open model never makes the safety call alone. Every thought goes through three nets, and the most cautious one wins:
+//   1. the keyword net (CRISIS_RE), on the full text;
+//   2. Claude (SAFETY_MODEL) with the same instructions, which decides the category;
+//   3. the open model's own category: if it says crisis or harm_to_others, that stands even if Claude disagreed.
+// The open model only writes the words for thoughts all three agree are safe to reframe.
+// If Claude can't be reached, nothing is shown from the open model (the caller shows "try again"), except that keyword hits still get the safety screen.
+
+const SEVERITY: Record<Category, number> = { crisis: 5, harm_to_others: 4, heavy: 3, everyday: 2, positive: 1, not_a_thought: 0 };
+
+export interface OpenResult extends ReframeResult {
+  /** Who wrote the words the person sees: "open" (the picked model) or "safety" (Claude, when the open model's answer couldn't be used). */
+  writer: "open" | "safety" | "none";
+}
+
+/** Chat messages for an open model: the same instructions, plus a reminder to answer with JSON only. */
+export function openMessages(text: string) {
+  return [
+    { role: "system", content: SYSTEM_PROMPT + "\n\nAnswer with only the JSON object, on one line, with the keys category, about, reframe and pattern. No other text." },
+    { role: "user", content: `<thought>${text}</thought>` },
+  ];
+}
+
+/** Pulls the JSON object out of an open model's reply, which may wrap it in prose, code fences or <think> blocks. */
+export function parseOpenReply(raw: unknown): Omit<ReframeResult, "source"> {
+  let obj: any = raw;
+  if (typeof raw === "string") {
+    const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/gi, "");
+    const start = cleaned.indexOf("{"), end = cleaned.lastIndexOf("}");
+    if (start < 0 || end <= start) throw new Error("No JSON in open model reply");
+    obj = JSON.parse(cleaned.slice(start, end + 1));
+  }
+  if (!obj || typeof obj !== "object" || !CATEGORIES.includes(obj.category)) throw new Error("Bad open model reply");
+  const pattern: Pattern = PATTERNS.includes(obj.pattern) ? obj.pattern : "none";
+  return { category: obj.category, about: obj.about === "someone_else" ? "someone_else" : "self", reframe: String(obj.reframe ?? "").trim(), pattern };
+}
+
+const BANNED_RE = /[!"“”#]|\p{Extended_Pictographic}/u;
+/** True when an open model's reframe follows the house rules closely enough to show. */
+export function usableReframe(s: string): boolean {
+  const words = s.trim().split(/\s+/).filter(Boolean).length;
+  return words >= 6 && words <= 50 && !BANNED_RE.test(s);
+}
+
+/**
+ * Runs one thought with an open model, with Claude making the safety call.
+ * `safetyCall` sends a Messages API body to Anthropic; `openCall` sends chat messages to the open model and returns its parsed reply.
+ * Both run at the same time to keep it quick; the open model's words are dropped whenever the thought isn't safe to reframe.
+ */
+export async function runOpenBrain(
+  thought: string,
+  safetyCall: (body: ReturnType<typeof requestBody>) => Promise<any>,
+  openCall: (messages: ReturnType<typeof openMessages>) => Promise<Omit<ReframeResult, "source">>,
+): Promise<OpenResult> {
+  const text = prepareThought(thought);
+  if (!text) return { category: "not_a_thought", reframe: "", pattern: "none", about: "self", source: "empty_input", writer: "none" };
+
+  const [safetyRes, openRes] = await Promise.allSettled([runBrain(thought, safetyCall, SAFETY_MODEL), openCall(openMessages(text))]);
+  // runBrain already applies the keyword net, and returns the safety screen on a keyword hit even if Claude fails.
+  if (safetyRes.status === "rejected") throw safetyRes.reason;
+  const safety = safetyRes.value;
+  const open = openRes.status === "fulfilled" ? openRes.value : null;
+
+  const none = (r: ReframeResult): OpenResult => ({ ...r, reframe: "", pattern: "none", writer: "none" });
+  if (safety.category === "crisis" || safety.category === "harm_to_others" || safety.category === "not_a_thought") return none(safety);
+  // The open model can only make things more cautious, never less.
+  if (open && (open.category === "crisis" || open.category === "harm_to_others")) {
+    return none({ ...safety, category: open.category, about: open.about === "someone_else" ? "someone_else" : safety.about, source: "model" });
+  }
+
+  // Among the reframable categories the more serious reading wins (heavy over everyday over positive),
+  // so a heavy thought is never treated lightly because one model missed it.
+  const openSafe = open && open.category !== "not_a_thought" ? open : null;
+  const category: Category = openSafe && SEVERITY[openSafe.category] > SEVERITY[safety.category] ? openSafe.category : safety.category;
+  // Use the open model's words when it read the thought that way and wrote a usable line.
+  if (openSafe && openSafe.category === category && usableReframe(openSafe.reframe)) {
+    return { ...safety, category, reframe: openSafe.reframe, pattern: category === "positive" ? "none" : openSafe.pattern, writer: "open" };
+  }
+  // Otherwise Claude's own line, written under the same rules, if it fits the category. The page says so.
+  // (A savour line from Claude doesn't fit a thought the open model read as a worry, so that case fails instead.)
+  if (safety.reframe && (safety.category === category || safety.category !== "positive")) return { ...safety, category, writer: "safety" };
+  throw new Error("No usable reframe"); // caller shows "try again"
 }
 
 export class ApiError extends Error {
