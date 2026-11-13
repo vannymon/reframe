@@ -6,6 +6,8 @@ The AI part of Reframe. It takes one thought, sorts it into a category, and writ
 - `reframe-brain.ts`: the Node wrapper the eval uses (Anthropic SDK client).
 - `test-thoughts.json`: 85 test thoughts with the categories we expect.
 - `eval.ts`: runs every test thought and lists missed crises first.
+- `eval-models.ts`: runs every test thought through Claude Opus, Claude Haiku, Llama and Qwen, and shows what the app would show for each pick. Writes `eval-models.md`.
+- `open-brain.test.ts`: checks the safety rules for Llama and Qwen with fake replies (`npm test`).
 
 ## Categories
 

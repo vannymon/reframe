@@ -5,3 +5,5 @@ dist/
 .env
 *.log
 brain/eval-results.json
+brain/eval-models.md
+brain/eval-models.json

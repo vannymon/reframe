@@ -14,8 +14,16 @@ run_worker_first = ["/api/*"]
 DAILY_BUDGET_USD = "3"
 # Extra safety net: most thoughts per day, whatever they cost. "0" turns it off.
 DAILY_CAP = "500"
+# The open models people can pick, on Cloudflare Workers AI. Swap the IDs here if Cloudflare retires one.
+LLAMA_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+QWEN_MODEL = "@cf/qwen/qwen3.8-27b"
 # Extra origins allowed to call the API (comma-separated), e.g. if the page is hosted elsewhere. Same-origin always works.
 ALLOWED_ORIGINS = ""
+
+# Workers AI, for Llama and Qwen. On the Workers Free plan this is free up to 10,000 neurons a day
+# (shared by both models, roughly 40 to 90 reframes), then calls fail until midnight UTC. It never bills on the Free plan.
+[ai]
+binding = "AI"
 
 # Per-visitor limit: 5 thoughts per minute. Counters live in Cloudflare's memory and expire on their own.
 [[ratelimits]]

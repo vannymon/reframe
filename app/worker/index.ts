@@ -1,7 +1,9 @@
-// Reframe API. Stateless: the thought is read, sent to Claude, and forgotten.
+// Reframe API. Stateless: the thought is read, sent to the picked model (and to Claude for the safety check), and forgotten.
 // Nothing here logs, stores or forwards thought text, IPs or keys.
 import { DurableObject } from "cloudflare:workers";
-import { CRISIS_RESULT, hasCrisisWords, MAX_CHARS, anthropicCaller, prepareThought, runBrain } from "../../brain/brain-core.ts";
+import {
+  CRISIS_RESULT, hasCrisisWords, MAX_CHARS, anthropicCaller, prepareThought, runBrain, runOpenBrain, parseOpenReply, SCHEMA, openMessages,
+} from "../../brain/brain-core.ts";
 
 interface Env {
   REFRAME_API_KEY: string;
@@ -10,7 +12,13 @@ interface Env {
   ALLOWED_ORIGINS: string;
   PER_VISITOR: RateLimit;
   DAILY: DurableObjectNamespace<DailyCounter>;
+  AI: Ai;
+  LLAMA_MODEL: string;
+  QWEN_MODEL: string;
 }
+
+type Pick = "claude" | "llama" | "qwen";
+const PICKS: Pick[] = ["claude", "llama", "qwen"];
 
 // Anthropic list prices in US dollars per million tokens. A refusal can fall back to another model, so price by the model that answered.
 // An unknown model is priced at the most expensive rate, so a surprise never undercounts.
@@ -37,6 +45,8 @@ export function costMicros(res: any): number {
 // Held back while a request is in flight: about 2.5k input tokens plus the full 2,048 output tokens on Opus 5.5, rounded up.
 // This stops a burst of parallel requests from going over the budget.
 const RESERVE_MICROS = 55_000;
+// Held for a safety check on Claude Haiku 5.5 (used with Llama and Qwen): about 2.6k input tokens plus 2,048 output tokens, rounded up.
+const SAFETY_RESERVE_MICROS = 2_000;
 // Used for the "left today" estimate until a few real requests have been counted.
 const TYPICAL_MICROS = 15_000;
 
@@ -60,22 +70,25 @@ export class DailyCounter extends DurableObject {
     return n;
   }
 
-  /** Holds money for one request. Returns false when today's budget or count cap is used up. */
-  async reserve(budget: number, cap: number): Promise<{ ok: boolean; day: string; left: number }> {
+  /**
+   * Holds money for one request. Returns false when today's budget or count cap is used up.
+   * `counted` is true for a Claude reframe (it counts toward DAILY_CAP and the "left today" number) and false for a safety check.
+   */
+  async reserve(budget: number, cap: number, hold = RESERVE_MICROS, counted = true): Promise<{ ok: boolean; day: string; left: number }> {
     const d = await this.today();
-    if (d.spent + d.held + RESERVE_MICROS > budget || (cap > 0 && d.count >= cap)) return { ok: false, day: d.day, left: 0 };
-    d.held += RESERVE_MICROS;
+    if (d.spent + d.held + hold > budget || (counted && cap > 0 && d.count >= cap)) return { ok: false, day: d.day, left: 0 };
+    d.held += hold;
     await this.ctx.storage.put("d", d);
     return { ok: true, day: d.day, left: this.left(d, budget, cap) };
   }
 
   /** Swaps the hold for what the request really cost (0 if the call never reached the model). */
-  async settle(day: string, actual: number, budget: number, cap: number): Promise<number> {
+  async settle(day: string, actual: number, budget: number, cap: number, hold = RESERVE_MICROS, counted = true): Promise<number> {
     const d = await this.today();
     if (d.day === day) {
-      d.held = Math.max(0, d.held - RESERVE_MICROS);
+      d.held = Math.max(0, d.held - hold);
       d.spent += actual;
-      if (actual > 0) d.count += 1;
+      if (counted && actual > 0) d.count += 1;
       await this.ctx.storage.put("d", d);
     }
     return this.left(d, budget, cap);
@@ -112,6 +125,21 @@ async function visitorKey(req: Request): Promise<string> {
 const publicResult = (r: { category: string; reframe: string; pattern: string; about: string }) =>
   ({ category: r.category, reframe: r.reframe, pattern: r.pattern, about: r.about });
 
+/** Calls Llama or Qwen on Workers AI and returns the parsed reply. Free on the Workers Free plan (10,000 neurons a day, then errors, never a bill). */
+function workersAiCaller(env: Env, pick: "llama" | "qwen") {
+  const model = pick === "llama" ? env.LLAMA_MODEL : env.QWEN_MODEL;
+  return async (messages: ReturnType<typeof openMessages>) => {
+    const input: Record<string, unknown> = { messages, max_tokens: 400, temperature: 0.4 };
+    // Llama 3.3 supports JSON mode. Qwen's support isn't documented, so it relies on the instructions and a tolerant parser,
+    // and its reasoning is kept short (it defaults to the longest, which is slow and uses up the free allowance).
+    if (pick === "llama") input.response_format = { type: "json_schema", json_schema: SCHEMA };
+    else { input.reasoning_effort = "low"; input.max_tokens = 1500; }
+    const res: any = await env.AI.run(model as any, input as any);
+    const out = res?.response ?? res?.choices?.[0]?.message?.content ?? res?.result?.response;
+    return parseOpenReply(out);
+  };
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -137,12 +165,16 @@ export default {
     }
     if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405, cors);
 
-    let thought: unknown;
+    let thought: unknown, pickRaw: unknown;
     try {
-      thought = ((await req.json()) as any)?.thought;
+      const body = (await req.json()) as any;
+      thought = body?.thought;
+      pickRaw = body?.model ?? "claude";
     } catch {
       return json({ error: "bad_request" }, 400, cors);
     }
+    if (!PICKS.includes(pickRaw as Pick)) return json({ error: "bad_request" }, 400, cors);
+    const pick = pickRaw as Pick;
     if (typeof thought !== "string" || thought.length > MAX_CHARS * 2) return json({ error: "bad_request" }, 400, cors);
     const text = prepareThought(thought);
     if (!text) return json({ category: "not_a_thought", reframe: "", pattern: "none", about: "self" }, 200, cors);
@@ -153,23 +185,32 @@ export default {
     const { success } = await env.PER_VISITOR.limit({ key: await visitorKey(req) });
     if (!success) return keywordCrisis ? json(publicResult(CRISIS_RESULT), 200, cors) : json({ error: "rate_limited" }, 429, cors);
 
-    const hold = await counter().reserve(budget, cap);
+    // Claude reframes spend the daily budget. Llama and Qwen are free, but their safety check on Claude Haiku spends a little of it.
+    const isClaude = pick === "claude";
+    const holdMicros = isClaude ? RESERVE_MICROS : SAFETY_RESERVE_MICROS;
+    const hold = await counter().reserve(budget, cap, holdMicros, isClaude);
     if (!hold.ok) return keywordCrisis ? json(publicResult(CRISIS_RESULT), 200, cors) : json({ error: "daily_cap", left: 0 }, 429, cors);
 
     // Wrap the caller so the real token usage of every response is counted, including a failed parse after a good call.
     let spent = 0;
     const call = anthropicCaller(env.REFRAME_API_KEY);
-    const counted = async (body: unknown) => {
+    const countedCall = async (body: unknown) => {
       const res = await call(body);
       spent += costMicros(res);
       return res;
     };
     try {
-      const result = await runBrain(thought, counted); // the brain checks the full text, then trims it
-      const left = await counter().settle(hold.day, spent, budget, cap);
-      return json({ ...publicResult(result), left }, 200, cors);
+      if (isClaude) {
+        const result = await runBrain(thought, countedCall); // the brain checks the full text, then trims it
+        const left = await counter().settle(hold.day, spent, budget, cap, holdMicros, true);
+        return json({ ...publicResult(result), writer: "claude", left }, 200, cors);
+      }
+      const result = await runOpenBrain(thought, countedCall, workersAiCaller(env, pick));
+      await counter().settle(hold.day, spent, budget, cap, holdMicros, false);
+      // writer: who wrote the words: the picked model, or Claude when the picked model's answer couldn't be used.
+      return json({ ...publicResult(result), writer: result.writer === "open" ? pick : result.writer === "safety" ? "claude" : "none" }, 200, cors);
     } catch {
-      await counter().settle(hold.day, spent, budget, cap);
+      await counter().settle(hold.day, spent, budget, cap, holdMicros, isClaude);
       // No details: an error object could carry the thought.
       return json({ error: "unavailable" }, 502, cors);
     }

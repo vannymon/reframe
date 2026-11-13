@@ -4,7 +4,9 @@
   "description": "",
   "scripts": {
     "eval": "tsx eval.ts",
-    "typecheck": "tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --allowImportingTsExtensions --strict reframe-brain.ts eval.ts"
+    "typecheck": "tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --allowImportingTsExtensions --strict --skipLibCheck --types node reframe-brain.ts eval.ts eval-models.ts open-brain.test.ts",
+    "eval:models": "tsx eval-models.ts",
+    "test": "tsx open-brain.test.ts"
   },
   "author": "",
   "license": "ISC",
