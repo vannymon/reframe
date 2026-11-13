@@ -175,9 +175,9 @@ async function enchant(){
   let charging=true;
   (function keep(){ if(!reduce&&charging){ fx.charge(700); setTimeout(keep,600);} })();
   const r=await reframe(t);
-  const wait=Math.max(0,(reduce?0:1400)-(performance.now()-t0));
+  const wait=Math.max(0,(reduce?0:900)-(performance.now()-t0)); // a short minimum so a fast answer still gets a moment of sparkle
   await new Promise(res=>setTimeout(res,wait));
-  charging=false; busy=false; ta.readOnly=false;
+  charging=false; busy=false; ta.readOnly=false; fx.settle();
   if(r.safety){ setSafetyCopy(r.someoneElse); setState('safety'); $('safetyTitle').focus({preventScroll:true}); return; }
   if(r.pause){ setState('pause'); $('pauseTitle').focus({preventScroll:true}); return; }
   if(r.nudge||r.error){
@@ -234,12 +234,21 @@ again.addEventListener('click',()=>{
 /* sparkle particles */
 const fx=(()=>{
   const c=$('fx'), ctx=c.getContext('2d'); let W=0,H=0,parts=[],running=false,chargeUntil=0;
-  function resize(){const d=Math.min(devicePixelRatio||1,2); W=innerWidth; H=innerHeight; c.width=W*d; c.height=H*d; c.style.width=W+'px'; c.style.height=H+'px'; ctx.setTransform(d,0,0,d,0,0);}
+  function resize(){const d=Math.min(devicePixelRatio||1,1.5); /* soft glow dots don't need full retina resolution */ W=innerWidth; H=innerHeight; c.width=W*d; c.height=H*d; c.style.width=W+'px'; c.style.height=H+'px'; ctx.setTransform(d,0,0,d,0,0);}
   addEventListener('resize',resize); resize();
   const cols=['255,255,255','255,255,255','255,173,196','255,214,228'];
+  // Each glow dot is drawn once per colour into a small sprite, then stamped with drawImage.
+  // Building a gradient per dot per frame was the main cost on phones.
+  const SPRITE=64, sprites={};
+  for(const col of cols){ if(sprites[col]) continue;
+    const s=document.createElement('canvas'); s.width=s.height=SPRITE; const g=s.getContext('2d'), h=SPRITE/2;
+    const grad=g.createRadialGradient(h,h,0,h,h,h);
+    grad.addColorStop(0,`rgba(${col},1)`); grad.addColorStop(.35,`rgba(${col},.55)`); grad.addColorStop(1,`rgba(${col},0)`);
+    g.fillStyle=grad; g.fillRect(0,0,SPRITE,SPRITE); sprites[col]=s; }
   const pick=()=>cols[Math.random()*cols.length|0];
+  const MAX_PARTS=180;
   function center(){const r=bubble.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,rad:Math.max(r.width,r.height)/2};}
-  function spawnIn(){const {x,y,rad}=center(), a=Math.random()*Math.PI*2;
+  function spawnIn(c){const {x,y,rad}=c, a=Math.random()*Math.PI*2;
     parts.push({in:true,cx:x,cy:y,a,d:rad*(1.05+Math.random()*.7),spin:.02+Math.random()*.035,size:1.2+Math.random()*2.6,col:pick()});}
   function burst(){const {x,y,rad}=center();
     for(let i=0;i<110;i++){const a=Math.random()*Math.PI*2, s=2+Math.random()*6;
@@ -250,15 +259,16 @@ const fx=(()=>{
       parts.push({in:false,x:x+Math.cos(a)*r,y:y+Math.sin(a)*r*.8,vx:(Math.random()-.5)*.5,vy:-(.35+Math.random()*.9),life:1,decay:.004+Math.random()*.006,size:1+Math.random()*2.4,col:pick(),float:true});}
     start();}
   function charge(ms){chargeUntil=performance.now()+ms; start();}
+  // The answer is in: stop spawning and pull the swirling dots in quickly, so the reveal isn't held up.
+  function settle(){chargeUntil=0; for(const p of parts) if(p.in) p.fast=true;}
   function start(){if(!running){running=true; requestAnimationFrame(tick);}}
-  function dot(x,y,size,col,a){const r=size*3.2, g=ctx.createRadialGradient(x,y,0,x,y,r);
-    g.addColorStop(0,`rgba(${col},${a})`); g.addColorStop(.35,`rgba(${col},${a*.55})`); g.addColorStop(1,`rgba(${col},0)`);
-    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();}
+  function dot(x,y,size,col,a){const r=size*3.2;
+    ctx.globalAlpha=a; ctx.drawImage(sprites[col],x-r,y-r,r*2,r*2);}
   function tick(now){
     ctx.clearRect(0,0,W,H);
-    if(now<chargeUntil) for(let i=0;i<5;i++) spawnIn();
+    if(now<chargeUntil && parts.length<MAX_PARTS){ const c=center(); for(let i=0;i<4;i++) spawnIn(c); }
     parts=parts.filter(p=>{
-      if(p.in){ p.a+=p.spin; p.d*=.952; if(p.d<10) return false;
+      if(p.in){ p.a+=p.spin; p.d*=p.fast?.86:.952; if(p.d<10) return false;
         dot(p.cx+Math.cos(p.a)*p.d, p.cy+Math.sin(p.a)*p.d, p.size, p.col, Math.min(1,p.d/50)); }
       else if(p.float){ p.x+=p.vx+Math.sin(now/600+p.y/40)*.15; p.y+=p.vy; p.life-=p.decay; if(p.life<=0) return false;
         dot(p.x,p.y,p.size,p.col,Math.min(1,p.life*1.6)); }
@@ -266,9 +276,10 @@ const fx=(()=>{
         dot(p.x,p.y,p.size,p.col,p.life); }
       return true;
     });
+    ctx.globalAlpha=1;
     if(parts.length||now<chargeUntil) requestAnimationFrame(tick); else {running=false; ctx.clearRect(0,0,W,H);}
   }
-  return {charge,burst,rise};
+  return {charge,burst,rise,settle};
 })();
 
 setState('idle');
