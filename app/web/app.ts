@@ -42,7 +42,7 @@ async function viaServer(text, model){
   catch{ throw {code:'offline'}; }
   const body = await res.json().catch(()=>({}));
   if(model==='claude') showLeft(body.left);
-  if(!res.ok) throw {code: body.error || 'unavailable'};
+  if(!res.ok) throw {code: body.error || 'unavailable', detail: typeof body.code==='string' ? body.code.slice(0,60) : ''};
   return body;
 }
 async function viaOwnKey(text,key){
@@ -82,7 +82,7 @@ async function reframe(raw){
     }
   }catch(e){
     if(kw) return {safety:true}; // never let an outage hide the safety screen
-    return {error: e && e.code};
+    return {error: e && e.code, detail: e && e.detail};
   }
   if(r.category==="crisis") return {safety:true, someoneElse:r.about==="someone_else"};
   if(r.category==="harm_to_others") return {pause:true};
@@ -191,7 +191,7 @@ async function enchant(){
         ? "Today's free Claude reframes are used up. Paste your own Anthropic API key to keep going, or pick Llama or Qwen, which are still free today."
         : "Today's free reframes are used up. Paste your own Anthropic API key to keep going.");
     }
-    else showNotice(ERRORS[r.error] || "That didn't work. Try again in a moment.", r.error==='daily_cap' && getModel()!=='own');
+    else showNotice((ERRORS[r.error] || "That didn't work. Try again in a moment.") + (r.detail ? ` (${r.detail})` : ''), r.error==='daily_cap' && getModel()!=='own');
     return;
   }
   if(r.savour){

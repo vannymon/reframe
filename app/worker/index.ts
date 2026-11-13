@@ -2,7 +2,7 @@
 // Nothing here logs, stores or forwards thought text, IPs or keys.
 import { DurableObject } from "cloudflare:workers";
 import {
-  ApiError, CRISIS_RESULT, hasCrisisWords, MAX_CHARS, anthropicCaller, prepareThought, runBrain, runOpenBrain, parseOpenReply, SCHEMA, openMessages,
+  ApiError, errorCode, CRISIS_RESULT, hasCrisisWords, MAX_CHARS, anthropicCaller, prepareThought, runBrain, runOpenBrain, parseOpenReply, SCHEMA, openMessages,
 } from "../../brain/brain-core.ts";
 
 interface Env {
@@ -218,8 +218,11 @@ export default {
       await counter().settle(hold.day, spent, myBudget, cap, holdMicros, isClaude);
       // Anthropic's rate limit (429) or overload (529): many people at once. Ask them to try again shortly.
       if (err instanceof ApiError && (err.status === 429 || err.status === 529)) return json({ error: "busy" }, 503, cors);
-      // No details: an error object could carry the thought.
-      return json({ error: "unavailable" }, 502, cors);
+      // Only a short code (HTTP status and error type), never the error message or object, which could carry the thought.
+      // It shows in `npx wrangler tail` and on the page, so a failure can be traced.
+      const code = `${isClaude ? "claude" : "safety check"} ${errorCode(err)}`;
+      console.log(`reframe unavailable: ${pick}, ${code}`);
+      return json({ error: "unavailable", code }, 502, cors);
     }
   },
 } satisfies ExportedHandler<Env>;

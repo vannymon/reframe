@@ -272,6 +272,14 @@ export class ApiError extends Error {
   }
 }
 
+/** A short, thought-free code for why a call failed, e.g. "400 no_credit". Safe to show and log: it never contains the thought. */
+export function errorCode(err: unknown): string {
+  if (err instanceof ApiError) return `${err.status} ${err.type}`;
+  if (err instanceof TypeError) return "network"; // fetch couldn't connect
+  if (err instanceof Error && err.message === "No usable reframe") return "no usable reframe";
+  return "bad reply"; // the model answered, but not in the expected shape (cut off, not JSON, unknown category)
+}
+
 /** Calls the Messages API with fetch. `browser: true` is needed when a visitor's own key is used straight from the page. */
 export function anthropicCaller(apiKey: string, opts: { browser?: boolean; fetch?: typeof fetch } = {}) {
   const f = opts.fetch ?? fetch;
@@ -280,13 +288,18 @@ export function anthropicCaller(apiKey: string, opts: { browser?: boolean; fetch
       "content-type": "application/json",
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
-      "anthropic-beta": BETA,
     };
+    // The refusal-fallback beta goes only with requests that use it (Opus). Haiku has no server-side fallback.
+    if (body && typeof body === "object" && "fallbacks" in body) headers["anthropic-beta"] = BETA;
     if (opts.browser) headers["anthropic-dangerous-direct-browser-access"] = "true";
     const res = await f("https://api.anthropic.com/v1/messages", { method: "POST", headers, body: JSON.stringify(body) });
     if (!res.ok) {
       let type = "unknown";
-      try { type = ((await res.json()) as any)?.error?.type ?? type; } catch {}
+      try {
+        const e = ((await res.json()) as any)?.error;
+        type = e?.type ?? type;
+        if (/credit balance/i.test(String(e?.message ?? ""))) type = "no_credit"; // the key's account is out of credit
+      } catch {}
       throw new ApiError(res.status, type);
     }
     return res.json();
