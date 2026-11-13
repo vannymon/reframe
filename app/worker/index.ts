@@ -194,6 +194,17 @@ export default {
     const holdMicros = isClaude ? RESERVE_MICROS : SAFETY_RESERVE_MICROS;
     const myBudget = isClaude ? claudeBudget : budget;
     const hold = await counter().reserve(myBudget, cap, holdMicros, isClaude);
+    // Llama and Qwen keep working when the budget for Claude's check is used up: they run on their own (see runOpenBrain).
+    if (!hold.ok && !isClaude) {
+      try {
+        const result = await runOpenBrain(thought, null, workersAiCaller(env, pick));
+        return json({ ...publicResult(result), writer: result.writer === "open" ? pick : "none", checked: false }, 200, cors);
+      } catch (err) {
+        const code = `unchecked ${errorCode(err)}`;
+        console.log(`reframe unavailable: ${pick}, ${code}`);
+        return json({ error: "unavailable", code }, 502, cors);
+      }
+    }
     if (!hold.ok) return keywordCrisis ? json(publicResult(CRISIS_RESULT), 200, cors) : json({ error: "daily_cap", left: 0 }, 429, cors);
 
     // Wrap the caller so the real token usage of every response is counted, including a failed parse after a good call.
@@ -213,14 +224,14 @@ export default {
       const result = await runOpenBrain(thought, countedCall, workersAiCaller(env, pick));
       await counter().settle(hold.day, spent, myBudget, cap, holdMicros, false);
       // writer: who wrote the words: the picked model, or Claude when the picked model's answer couldn't be used.
-      return json({ ...publicResult(result), writer: result.writer === "open" ? pick : result.writer === "safety" ? "claude" : "none" }, 200, cors);
+      return json({ ...publicResult(result), writer: result.writer === "open" ? pick : result.writer === "safety" ? "claude" : "none", checked: result.checked }, 200, cors);
     } catch (err) {
       await counter().settle(hold.day, spent, myBudget, cap, holdMicros, isClaude);
       // Anthropic's rate limit (429) or overload (529): many people at once. Ask them to try again shortly.
       if (err instanceof ApiError && (err.status === 429 || err.status === 529)) return json({ error: "busy" }, 503, cors);
       // Only a short code (HTTP status and error type), never the error message or object, which could carry the thought.
       // It shows in `npx wrangler tail` and on the page, so a failure can be traced.
-      const code = `${isClaude ? "claude" : "safety check"} ${errorCode(err)}`;
+      const code = `${isClaude ? "claude" : "open model"} ${errorCode(err)}`;
       console.log(`reframe unavailable: ${pick}, ${code}`);
       return json({ error: "unavailable", code }, 502, cors);
     }
