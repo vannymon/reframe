@@ -95,7 +95,8 @@ async function reframe(raw){
 
 const ERRORS = {
   rate_limited: "That's a lot of thoughts in a short time. Give it a minute and try again.",
-  daily_cap: "Reframe has used up today's free reframes. Please come back tomorrow.",
+  busy: "Lots of people are reframing right now. Try again in a few seconds.",
+  daily_cap: "Today's free reframes are used up. More tomorrow.",
   key_rate_limited: "Your API key is being rate limited by Anthropic. Try again in a moment.",
   offline: "Couldn't reach Reframe. Check your connection and try again.",
 };
@@ -182,6 +183,14 @@ async function enchant(){
   if(r.nudge||r.error){
     setState('editing');
     if(r.nudge){ eyebrow.textContent=NUDGES[r.nudge]; }
+    else if(r.error==='daily_cap' && !(getModel()==='own' && getKey())){
+      // Today's free Claude is used up: ask for their own key right away. Their thought stays in the bubble, ready to send again.
+      showNotice(ERRORS.daily_cap, true);
+      retryAfterPick=true;
+      openKeyDialog('own', getModel()==='claude' || getModel()==='own'
+        ? "Today's free Claude reframes are used up. Paste your own Anthropic API key to keep going, or pick Llama or Qwen, which are still free today."
+        : "Today's free reframes are used up. Paste your own Anthropic API key to keep going.");
+    }
     else showNotice(ERRORS[r.error] || "That didn't work. Try again in a moment.", r.error==='daily_cap' && getModel()!=='own');
     return;
   }
@@ -294,8 +303,11 @@ function syncKeyBox(){
   keyRemove.hidden=!(own && getKey());
   keyMsg.textContent = own && getKey() ? 'A key is saved for this tab. Paste a new one to replace it, or leave it empty to keep it.' : '';
 }
-function openKeyDialog(prefer){
+const keyIntro=$('keyIntro');
+let retryAfterPick=false; // set when the dialog opened because free Claude ran out: send the thought again once they pick
+function openKeyDialog(prefer, intro){
   keyInput.value='';
+  keyIntro.textContent = intro || ''; keyIntro.hidden = !intro;
   const m = typeof prefer==='string' ? prefer : getModel();
   radios.forEach(r=>{ r.checked = r.value===m; });
   syncKeyBox();
@@ -315,6 +327,7 @@ $('keyForm').addEventListener('submit',e=>{
     if(k) setKey(k);
   }
   setModel(m); refreshKeyLink();
+  if(retryAfterPick && bubble.dataset.state==='editing' && ta.value.trim()){ retryAfterPick=false; setTimeout(enchant,250); }
 });
-keyDialog.addEventListener('close',()=>{ keyInput.value=''; });
+keyDialog.addEventListener('close',()=>{ keyInput.value=''; if(keyDialog.returnValue!=='save') retryAfterPick=false; });
 refreshKeyLink();

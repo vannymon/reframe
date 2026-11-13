@@ -2,7 +2,7 @@
 // Nothing here logs, stores or forwards thought text, IPs or keys.
 import { DurableObject } from "cloudflare:workers";
 import {
-  CRISIS_RESULT, hasCrisisWords, MAX_CHARS, anthropicCaller, prepareThought, runBrain, runOpenBrain, parseOpenReply, SCHEMA, openMessages,
+  ApiError, CRISIS_RESULT, hasCrisisWords, MAX_CHARS, anthropicCaller, prepareThought, runBrain, runOpenBrain, parseOpenReply, SCHEMA, openMessages,
 } from "../../brain/brain-core.ts";
 
 interface Env {
@@ -47,6 +47,9 @@ export function costMicros(res: any): number {
 const RESERVE_MICROS = 55_000;
 // Held for a safety check on Claude Haiku 5.5 (used with Llama and Qwen): about 2.6k input tokens plus 2,048 output tokens, rounded up.
 const SAFETY_RESERVE_MICROS = 2_000;
+// Claude reframes may use 90% of the daily budget. The last 10% (30 cents of $3, about 1,000 checks) is kept for the
+// Claude Haiku safety check that Llama and Qwen need, so the open models keep working after free Claude runs out.
+const CLAUDE_SHARE = 0.9;
 // Used for the "left today" estimate until a few real requests have been counted.
 const TYPICAL_MICROS = 15_000;
 
@@ -144,13 +147,14 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     const budget = Math.round((Number(env.DAILY_BUDGET_USD) || 0) * 1e6);
+    const claudeBudget = Math.floor(budget * CLAUDE_SHARE);
     const cap = Number(env.DAILY_CAP) || 0;
     const counter = () => env.DAILY.get(env.DAILY.idFromName("global"));
 
     if (url.pathname === "/api/status") {
       // How many free reframes are left today, for everyone combined. Spend is shown to nobody; only the count.
       if (req.method !== "GET") return json({ error: "method_not_allowed" }, 405);
-      const { left } = await counter().status(budget, cap);
+      const { left } = await counter().status(claudeBudget, cap);
       return json({ left });
     }
     if (url.pathname !== "/api/reframe") return json({ error: "not_found" }, 404);
@@ -188,7 +192,8 @@ export default {
     // Claude reframes spend the daily budget. Llama and Qwen are free, but their safety check on Claude Haiku spends a little of it.
     const isClaude = pick === "claude";
     const holdMicros = isClaude ? RESERVE_MICROS : SAFETY_RESERVE_MICROS;
-    const hold = await counter().reserve(budget, cap, holdMicros, isClaude);
+    const myBudget = isClaude ? claudeBudget : budget;
+    const hold = await counter().reserve(myBudget, cap, holdMicros, isClaude);
     if (!hold.ok) return keywordCrisis ? json(publicResult(CRISIS_RESULT), 200, cors) : json({ error: "daily_cap", left: 0 }, 429, cors);
 
     // Wrap the caller so the real token usage of every response is counted, including a failed parse after a good call.
@@ -202,15 +207,17 @@ export default {
     try {
       if (isClaude) {
         const result = await runBrain(thought, countedCall); // the brain checks the full text, then trims it
-        const left = await counter().settle(hold.day, spent, budget, cap, holdMicros, true);
+        const left = await counter().settle(hold.day, spent, myBudget, cap, holdMicros, true);
         return json({ ...publicResult(result), writer: "claude", left }, 200, cors);
       }
       const result = await runOpenBrain(thought, countedCall, workersAiCaller(env, pick));
-      await counter().settle(hold.day, spent, budget, cap, holdMicros, false);
+      await counter().settle(hold.day, spent, myBudget, cap, holdMicros, false);
       // writer: who wrote the words: the picked model, or Claude when the picked model's answer couldn't be used.
       return json({ ...publicResult(result), writer: result.writer === "open" ? pick : result.writer === "safety" ? "claude" : "none" }, 200, cors);
-    } catch {
-      await counter().settle(hold.day, spent, budget, cap, holdMicros, isClaude);
+    } catch (err) {
+      await counter().settle(hold.day, spent, myBudget, cap, holdMicros, isClaude);
+      // Anthropic's rate limit (429) or overload (529): many people at once. Ask them to try again shortly.
+      if (err instanceof ApiError && (err.status === 429 || err.status === 529)) return json({ error: "busy" }, 503, cors);
       // No details: an error object could carry the thought.
       return json({ error: "unavailable" }, 502, cors);
     }
