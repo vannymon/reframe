@@ -18,7 +18,9 @@ An open model never decides on its own whether a thought is safe. For Llama and 
 2. Claude Haiku 5.5 with the same instructions, which sets the category;
 3. the open model's own category, which can only make things more cautious: if it says crisis or harm, that wins.
 
-The open model's words are shown only when the thought is safe to reframe and its line follows the style rules. Otherwise Claude's line is shown, and the page says so. If Claude can't be reached, nothing from the open model is shown (keyword hits still get the safety screen). The logic is `runOpenBrain` in `../brain/brain-core.ts`, with tests in `../brain/open-brain.test.ts`.
+The open model's words are shown only when the thought is safe to reframe and its line follows the style rules. Otherwise Claude's line is shown, and the page says so. If Claude's check is unavailable (no credit, an API error, or today's budget used up), Llama and Qwen run on their own, as van chose on 2026-11-13: the crisis keyword net, a wider warning-word net (`UNCHECKED_RISK_RE` and `UNCHECKED_HARM_RE`, which err towards the safety and pause screens), and the open model's own category. This is free but more likely to miss a crisis than with Claude's check. Responses then carry `"checked": false`.
+
+When a reframe fails, the response carries a short code such as `open model 400 no_credit` or `check 400 no_credit; open workers ai 3036`. It holds only status codes and error types, never the thought. The page shows it after the error, and `npx wrangler tail` logs it. The logic is `runOpenBrain` in `../brain/brain-core.ts`, with tests in `../brain/open-brain.test.ts`.
 
 **Workers AI cost:** on the Workers Free plan you get 10,000 neurons a day, shared by Llama and Qwen. A Llama reframe uses about 100 and a Qwen reframe about 250 (Qwen reasons first), so roughly 40 to 90 a day. After that Workers AI returns errors until midnight UTC and Claude writes those reframes instead. It never bills on the Free plan. If you move to Workers Paid, it bills $0.011 per 1,000 neurons above the free amount.
 

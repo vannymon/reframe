@@ -286,7 +286,7 @@ dialog .primary::after{content:none}
       <label class="model"><input type="radio" name="model" value="qwen"><span><b>Qwen</b><small>Alibaba's open model, run by Cloudflare. Free while today's allowance lasts.</small></span></label>
       <label class="model"><input type="radio" name="model" value="own"><span><b>Claude with your own key</b><small>Uses your Anthropic account, so the cost goes to you.</small></span></label>
     </fieldset>
-    <p class="small">Whichever you pick, Claude checks every thought for safety before anything is shown, so anything about being in danger always gets real help.</p>
+    <p class="small">Claude checks every thought for safety before anything is shown. If that check is ever unavailable, Llama and Qwen fall back on their own judgement and a list of warning words, which is less reliable. Words about ending your life always bring up real help.</p>
     <div id="keyBox" hidden>
       <p class="small"><b>Where your key goes:</b> it stays in this browser tab and is sent straight to Anthropic. It never goes to the Reframe server, and it's forgotten when you close the tab. Tip: make a separate key with a low spend limit in the <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</p>
       <label for="keyInput">Anthropic API key</label>

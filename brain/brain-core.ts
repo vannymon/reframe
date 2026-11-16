@@ -184,13 +184,24 @@ export async function runBrain(thought: string, call: (body: ReturnType<typeof r
 //   2. Claude (SAFETY_MODEL) with the same instructions, which decides the category;
 //   3. the open model's own category: if it says crisis or harm_to_others, that stands even if Claude disagreed.
 // The open model only writes the words for thoughts all three agree are safe to reframe.
-// If Claude can't be reached, nothing is shown from the open model (the caller shows "try again"), except that keyword hits still get the safety screen.
+// If Claude's check is unavailable (no credit, an API error, or today's budget used up), the open model runs on its own,
+// as van chose on 2026-11-13. Then the keyword net, a wider "unchecked" word net (UNCHECKED_RISK_RE) and the open
+// model's own category decide. This is free but more likely to miss a crisis than with Claude's check.
+
+/** Extra net used only when Claude's check is unavailable: words around death, disappearing, giving up and harm.
+ *  It errs towards the safety screen, so some ordinary thoughts ("dying of embarrassment") get it too. */
+export const UNCHECKED_RISK_RE =
+  /\b(die|dying|dead|death|suicid\w*|disappear\w*|not exist\w*|stop existing|no point|pointless|give up on (life|everything)|can'?t go on|can'?t do this anymore|goodbye|good ?bye forever|end (it|things|everything)|overdose|pills|jump(ing)? off|hang(ing)? myself|burden|hopeless|worthless|no reason to live|nobody would (care|notice|miss)|hits? me|hitting me|beat(s|ing)? me|abus\w*|unsafe|in danger)\b/i;
+/** Same idea for harm to others, also only when unchecked: these go to the calm pause screen. */
+export const UNCHECKED_HARM_RE = /\b(kill|murder|stab|strangle|weapon|gun|knife|poison|hurt(ing)? (him|her|them|someone|people|my))\b/i;
 
 const SEVERITY: Record<Category, number> = { crisis: 5, harm_to_others: 4, heavy: 3, everyday: 2, positive: 1, not_a_thought: 0 };
 
 export interface OpenResult extends ReframeResult {
   /** Who wrote the words the person sees: "open" (the picked model) or "safety" (Claude, when the open model's answer couldn't be used). */
   writer: "open" | "safety" | "none";
+  /** False when Claude's safety check couldn't run (no credit, API error, budget used up) and the open model's own judgement was used. */
+  checked: boolean;
 }
 
 /** Chat messages for an open model: the same instructions, plus a reminder to answer with JSON only. */
@@ -229,19 +240,26 @@ export function usableReframe(s: string): boolean {
  */
 export async function runOpenBrain(
   thought: string,
-  safetyCall: (body: ReturnType<typeof requestBody>) => Promise<any>,
+  safetyCall: ((body: ReturnType<typeof requestBody>) => Promise<any>) | null, // null when the budget for the check is used up
   openCall: (messages: ReturnType<typeof openMessages>) => Promise<Omit<ReframeResult, "source">>,
 ): Promise<OpenResult> {
   const text = prepareThought(thought);
-  if (!text) return { category: "not_a_thought", reframe: "", pattern: "none", about: "self", source: "empty_input", writer: "none" };
+  if (!text) return { category: "not_a_thought", reframe: "", pattern: "none", about: "self", source: "empty_input", writer: "none", checked: true };
+  // Crisis keywords always get the safety screen, whatever else happens.
+  if (hasCrisisWords(thought)) return { ...CRISIS_RESULT, writer: "none", checked: true };
 
-  const [safetyRes, openRes] = await Promise.allSettled([runBrain(thought, safetyCall, SAFETY_MODEL), openCall(openMessages(text))]);
-  // runBrain already applies the keyword net, and returns the safety screen on a keyword hit even if Claude fails.
-  if (safetyRes.status === "rejected") throw safetyRes.reason;
-  const safety = safetyRes.value;
+  const [safetyRes, openRes] = await Promise.allSettled([
+    safetyCall ? runBrain(thought, safetyCall, SAFETY_MODEL) : Promise.reject(new Error("No budget for the safety check")),
+    openCall(openMessages(text)),
+  ]);
   const open = openRes.status === "fulfilled" ? openRes.value : null;
+  if (safetyRes.status === "rejected") {
+    const openErr = openRes.status === "rejected" ? openRes.reason : null;
+    return runUnchecked(thought, open, safetyRes.reason, openErr);
+  }
+  const safety = { ...safetyRes.value, checked: true };
 
-  const none = (r: ReframeResult): OpenResult => ({ ...r, reframe: "", pattern: "none", writer: "none" });
+  const none = (r: ReframeResult & { checked: boolean }): OpenResult => ({ ...r, reframe: "", pattern: "none", writer: "none" });
   if (safety.category === "crisis" || safety.category === "harm_to_others" || safety.category === "not_a_thought") return none(safety);
   // The open model can only make things more cautious, never less.
   if (open && (open.category === "crisis" || open.category === "harm_to_others")) {
@@ -262,6 +280,26 @@ export async function runOpenBrain(
   throw new Error("No usable reframe"); // caller shows "try again"
 }
 
+/** The open model on its own, when Claude's check is unavailable. `checkError` is rethrown if the open model failed too. */
+function runUnchecked(thought: string, open: Omit<ReframeResult, "source"> | null, checkError: unknown, openError: unknown = null): OpenResult {
+  const base = { source: "model" as const, checked: false };
+  // Wider word net first: anything near death, harm or giving up goes to the safety screen.
+  const full = String(thought ?? "");
+  if (UNCHECKED_RISK_RE.test(full)) return { ...base, category: "crisis", about: open?.about ?? "self", reframe: "", pattern: "none", writer: "none" };
+  if (UNCHECKED_HARM_RE.test(full)) return { ...base, category: open?.category === "crisis" ? "crisis" : "harm_to_others", about: "self", reframe: "", pattern: "none", writer: "none" };
+  if (!open) {
+    // Nothing to show: the caller shows "try again" with both error codes.
+    const e: any = new Error("Both failed");
+    e.code = `check ${errorCode(checkError)}; open ${errorCode(openError)}`;
+    throw e;
+  }
+  if (open.category === "crisis" || open.category === "harm_to_others" || open.category === "not_a_thought") {
+    return { ...base, ...open, reframe: "", pattern: "none", writer: "none" };
+  }
+  if (!usableReframe(open.reframe)) throw new Error("No usable reframe");
+  return { ...base, ...open, pattern: open.category === "positive" ? "none" : open.pattern, writer: "open" };
+}
+
 export class ApiError extends Error {
   status: number;
   type: string;
@@ -272,6 +310,19 @@ export class ApiError extends Error {
   }
 }
 
+/** A short, thought-free code for why a call failed, e.g. "400 no_credit". Safe to show and log: it never contains the thought. */
+export function errorCode(err: unknown): string {
+  if (err instanceof ApiError) return `${err.status} ${err.type}`;
+  if (err instanceof Error && typeof (err as any).code === "string") return (err as any).code;
+  if (err instanceof Error && err.message === "No budget for the safety check") return "no budget";
+  // Workers AI errors carry a 4-digit code (e.g. 3036 = daily free allowance used up). Keep only that number.
+  const ai = err instanceof Error ? /\b(\d{4})\b/.exec(err.message) : null;
+  if (ai && !(err instanceof TypeError) && !(err instanceof SyntaxError)) return `workers ai ${ai[1]}`;
+  if (err instanceof TypeError) return "network"; // fetch couldn't connect
+  if (err instanceof Error && err.message === "No usable reframe") return "no usable reframe";
+  return "bad reply"; // the model answered, but not in the expected shape (cut off, not JSON, unknown category)
+}
+
 /** Calls the Messages API with fetch. `browser: true` is needed when a visitor's own key is used straight from the page. */
 export function anthropicCaller(apiKey: string, opts: { browser?: boolean; fetch?: typeof fetch } = {}) {
   const f = opts.fetch ?? fetch;
@@ -280,13 +331,18 @@ export function anthropicCaller(apiKey: string, opts: { browser?: boolean; fetch
       "content-type": "application/json",
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
-      "anthropic-beta": BETA,
     };
+    // The refusal-fallback beta goes only with requests that use it (Opus). Haiku has no server-side fallback.
+    if (body && typeof body === "object" && "fallbacks" in body) headers["anthropic-beta"] = BETA;
     if (opts.browser) headers["anthropic-dangerous-direct-browser-access"] = "true";
     const res = await f("https://api.anthropic.com/v1/messages", { method: "POST", headers, body: JSON.stringify(body) });
     if (!res.ok) {
       let type = "unknown";
-      try { type = ((await res.json()) as any)?.error?.type ?? type; } catch {}
+      try {
+        const e = ((await res.json()) as any)?.error;
+        type = e?.type ?? type;
+        if (/credit balance/i.test(String(e?.message ?? ""))) type = "no_credit"; // the key's account is out of credit
+      } catch {}
       throw new ApiError(res.status, type);
     }
     return res.json();
